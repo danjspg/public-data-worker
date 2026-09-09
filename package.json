@@ -16,7 +16,10 @@
     "work:active-recent": "node src/active-planning-recent.mjs",
     "work:bcms": "node src/bcms-acquisition.mjs",
     "work:appeals-current": "node src/current-appeals.mjs",
-    "work:planning-professionals": "node src/planning-professionals.mjs"
+    "work:planning-professionals": "node src/planning-professionals.mjs",
+    "work:planning-historical-discovery": "node src/planning-historical-discovery.mjs",
+    "work:planning-historical-exact": "node src/planning-historical-exact.mjs",
+    "work:maintenance": "node src/worker-maintenance.mjs"
   },
   "dependencies": {
     "pg": "^8.13.3"
