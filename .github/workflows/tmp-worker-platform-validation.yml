@@ -1,0 +1,28 @@
+name: Validate worker platform
+on:
+  push:
+    paths:
+      - .github/workflows/tmp-worker-platform-validation.yml
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Run maintenance
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run work:maintenance
+      - name: Discover one Carlow historical month
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          HISTORICAL_DISCOVERY_AUTHORITY: CARLOW
+          HISTORICAL_DISCOVERY_START: '2016-12'
+          HISTORICAL_DISCOVERY_MIN: '2012-01'
+        run: npm run work:planning-historical-discovery
