@@ -1,4 +1,4 @@
-name: Process active Planning exact source checks
+name: "[PUBLIC] Process active Planning exact source checks"
 
 on:
   schedule:
