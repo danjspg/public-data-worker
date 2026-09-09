@@ -1,0 +1,41 @@
+name: Historical appeal reference catch-up
+
+on:
+  schedule:
+    - cron: "17 0,8,16 * * *"
+  workflow_dispatch:
+    inputs:
+      reset_cursor:
+        description: "Rescan from the beginning after a completed pass"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-historical-appeals
+  cancel-in-progress: false
+
+jobs:
+  catchup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Catch up historical appeal references
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          CATCHUP_BATCH_SIZE: "300"
+          CATCHUP_DELAY_MS: "750"
+          RESET_WORKER_CURSOR: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_cursor == true && 'true' || 'false' }}
+        run: npm run catchup:appeals
