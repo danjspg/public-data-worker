@@ -9,7 +9,8 @@
   "scripts": {
     "health": "node src/health.mjs",
     "catchup:appeals": "node src/historical-appeals.mjs",
-    "work:eplan-lifecycle": "node src/eplan-lifecycle.mjs"
+    "work:eplan-lifecycle": "node src/eplan-lifecycle.mjs",
+    "work:planning-descriptions": "node src/planning-descriptions.mjs"
   },
   "dependencies": {
     "pg": "^8.13.3"
