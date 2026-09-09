@@ -1,0 +1,37 @@
+name: Process active Agile Planning source checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/active-planning-agile.yml"
+      - "src/active-planning-agile.mjs"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-active-planning-agile
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Process active Agile Planning source checks
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          ACTIVE_AGILE_WORKER_LIMIT: "1000"
+        run: npm run work:active-agile
