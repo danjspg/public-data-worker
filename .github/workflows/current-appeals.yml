@@ -1,0 +1,40 @@
+name: Refresh current appeals public source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/current-appeals.yml"
+      - "src/current-appeals.mjs"
+      - "package.json"
+  schedule:
+    - cron: "45 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-current-appeals
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Fetch and stage current ACP cases
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          ACP_CURRENT_ENRICH_LIMIT: "500"
+          ACP_CURRENT_ENRICH_DELAY_MS: "150"
+        run: npm run work:appeals-current
