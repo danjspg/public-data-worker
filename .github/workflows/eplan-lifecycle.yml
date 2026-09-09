@@ -1,0 +1,40 @@
+name: Process queued ePlan lifecycle work
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/eplan-lifecycle.yml"
+      - "src/eplan-lifecycle.mjs"
+      - "package.json"
+  schedule:
+    - cron: "15 3 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-eplan-lifecycle
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Process queued ePlan lifecycle items
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          EPLAN_WORKER_LIMIT: "200"
+          EPLAN_WORKER_DELAY_MS: "1000"
+        run: npm run work:eplan-lifecycle
