@@ -1,0 +1,41 @@
+name: Acquire BCMS public source pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/bcms-acquisition.yml"
+      - "src/bcms-acquisition.mjs"
+      - "package.json"
+  schedule:
+    - cron: "15 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-bcms-acquisition
+  cancel-in-progress: false
+
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Fetch and stage BCMS source pages
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          BCMS_SOURCE_PAGE_LIMIT: "250"
+          BCMS_APPEND_PAGES: "5"
+          BCMS_AUDIT_PAGES: "10"
+        run: npm run work:bcms
