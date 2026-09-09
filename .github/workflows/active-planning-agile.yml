@@ -19,7 +19,7 @@ concurrency:
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -33,7 +33,5 @@ jobs:
       - name: Process active Agile Planning source checks
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          ACTIVE_AGILE_WORKER_LIMIT: "1000"
+          ACTIVE_AGILE_WORKER_LIMIT: "5000"
         run: npm run work:active-agile
-
-# Source-v2 canary processes only public Agile detail reads; production writes remain private.
