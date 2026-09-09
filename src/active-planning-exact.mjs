@@ -10,6 +10,8 @@ const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/serv
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 
 async function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function clean(value) { return String(value ?? '').trim().replace(/\s+/g, ' '); }
+function escapeSql(value) { return clean(value).replaceAll("'", "''"); }
 async function fetchJson(url) {
   let lastError;
   for (let attempt = 1; attempt <= 4; attempt++) {
@@ -33,9 +35,30 @@ async function fetchJson(url) {
   throw lastError || new Error('request failed');
 }
 
+async function fetchByReferences(items) {
+  const refs = [...new Set(items.map((item) => clean(item.input.reference)).filter(Boolean))];
+  if (!refs.length) return new Map();
+  const where = refs.map((ref) => `ApplicationNumber='${escapeSql(ref)}'`).join(' OR ');
+  const params = new URLSearchParams({
+    where,
+    outFields: '*',
+    returnGeometry: 'false',
+    f: 'json',
+    resultRecordCount: String(Math.max(200, refs.length * 3)),
+  });
+  const json = await fetchJson(`${ARC_QUERY}?${params.toString()}`);
+  const byRef = new Map();
+  for (const feature of json.features || []) {
+    const attrs = feature.attributes || {};
+    const ref = clean(attrs.ApplicationNumber).toUpperCase();
+    if (ref && !byRef.has(ref)) byRef.set(ref, attrs);
+  }
+  return byRef;
+}
+
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
-let selected = 0, completed = 0, missing = 0, failed = 0;
+let selected = 0, completed = 0, referenceFallback = 0, missing = 0, failed = 0;
 try {
   const { rows } = await client.query(`
     select id, input
@@ -68,9 +91,16 @@ try {
         const id = Number(attrs.OBJECTID);
         if (Number.isInteger(id)) byId.set(id, attrs);
       }
+      const unresolved = batch.filter((item) => !byId.has(Number(item.input.source_application_id)));
+      const byRef = unresolved.length ? await fetchByReferences(unresolved) : new Map();
       for (const item of batch) {
         const sourceId = Number(item.input.source_application_id);
-        const attrs = byId.get(sourceId);
+        let attrs = byId.get(sourceId);
+        let matchedBy = 'objectid';
+        if (!attrs) {
+          attrs = byRef.get(clean(item.input.reference).toUpperCase());
+          matchedBy = 'reference';
+        }
         if (!attrs) {
           await client.query(`
             update work_items
@@ -84,8 +114,9 @@ try {
           update work_items
           set status='completed', result=$2::jsonb, completed_at=now(), last_error=null, updated_at=now()
           where id=$1
-        `, [item.id, JSON.stringify({ ok: true, found: true, attributes: attrs })]);
+        `, [item.id, JSON.stringify({ ok: true, found: true, matched_by: matchedBy, attributes: attrs })]);
         completed += 1;
+        if (matchedBy === 'reference') referenceFallback += 1;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -103,7 +134,7 @@ try {
     }
   }
 
-  console.log(JSON.stringify({ selected, completed, missing, deferred: failed }, null, 2));
+  console.log(JSON.stringify({ selected, completed, referenceFallback, missing, deferred: failed }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
