@@ -1,4 +1,4 @@
-name: Acquire BCMS public source pages
+name: "[PUBLIC] Acquire BCMS public source pages"
 
 on:
   push:
