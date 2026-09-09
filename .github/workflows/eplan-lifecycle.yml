@@ -38,3 +38,5 @@ jobs:
           EPLAN_WORKER_LIMIT: "200"
           EPLAN_WORKER_DELAY_MS: "1000"
         run: npm run work:eplan-lifecycle
+
+# Public source fetching is intentionally isolated here; production writes remain private.
