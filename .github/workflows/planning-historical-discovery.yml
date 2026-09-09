@@ -1,0 +1,53 @@
+name: Historical planning discovery
+
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: historical-planning-discovery
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        authority: [CORKCOCO,CORKCITY,DUBLINCITY,FINGAL,SOUTHDUBLIN,DLR,KILDARE,GALWAYCOCO,GALWAYCITY,MEATH,WICKLOW,LIMERICK,WATERFORD,DONEGAL,WEXFORD,TIPPERARY,KERRY,MAYO,CLARE,LOUTH,LAOIS,KILKENNY,OFFALY,CAVAN,ROSCOMMON,WESTMEATH,MONAGHAN,SLIGO,CARLOW,LONGFORD,LEITRIM]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Discover one historical month
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          HISTORICAL_DISCOVERY_AUTHORITY: ${{ matrix.authority }}
+          HISTORICAL_DISCOVERY_START: '2016-12'
+          HISTORICAL_DISCOVERY_MIN: '2012-01'
+        run: npm run work:planning-historical-discovery
+
+  exact:
+    needs: discover
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Process missing historical exact rows
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          HISTORICAL_EXACT_LIMIT: '1500'
+        run: npm run work:planning-historical-exact
