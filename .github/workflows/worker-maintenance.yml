@@ -1,0 +1,25 @@
+name: Public worker maintenance
+
+on:
+  schedule:
+    - cron: '47 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Recover stale leases and report queue health
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          STALE_LEASE_MINUTES: '120'
+        run: npm run work:maintenance
