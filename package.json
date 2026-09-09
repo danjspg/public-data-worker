@@ -15,7 +15,8 @@
     "work:active-agile": "node src/active-planning-agile.mjs",
     "work:active-recent": "node src/active-planning-recent.mjs",
     "work:bcms": "node src/bcms-acquisition.mjs",
-    "work:appeals-current": "node src/current-appeals.mjs"
+    "work:appeals-current": "node src/current-appeals.mjs",
+    "work:planning-professionals": "node src/planning-professionals.mjs"
   },
   "dependencies": {
     "pg": "^8.13.3"
