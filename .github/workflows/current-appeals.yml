@@ -1,4 +1,4 @@
-name: Refresh current appeals public source
+name: "[PUBLIC] Refresh current appeals public source"
 
 on:
   push:
