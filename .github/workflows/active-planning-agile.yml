@@ -1,4 +1,4 @@
-name: Process active Agile Planning source checks
+name: "[PUBLIC] Process active Agile Planning source checks"
 
 on:
   schedule:
