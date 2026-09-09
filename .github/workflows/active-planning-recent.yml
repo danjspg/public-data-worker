@@ -35,3 +35,5 @@ jobs:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           ACTIVE_RECENT_WORKER_LIMIT: "40"
         run: npm run work:active-recent
+
+# Canary covers all 31 authorities over the private enqueuer's overlapping recent window.
