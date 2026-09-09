@@ -1,0 +1,37 @@
+name: Process recent Planning discovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/active-planning-recent.yml"
+      - "src/active-planning-recent.mjs"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-active-planning-recent
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Process recent Planning discovery ranges
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          ACTIVE_RECENT_WORKER_LIMIT: "40"
+        run: npm run work:active-recent
