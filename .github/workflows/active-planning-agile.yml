@@ -35,3 +35,5 @@ jobs:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           ACTIVE_AGILE_WORKER_LIMIT: "1000"
         run: npm run work:active-agile
+
+# Source-v2 canary processes only public Agile detail reads; production writes remain private.
