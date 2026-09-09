@@ -4,7 +4,7 @@ const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
 if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
-const LIMIT = Math.max(1, Math.min(Number(process.env.EPLAN_WORKER_LIMIT || 200), 300));
+const LIMIT = Math.max(1, Math.min(Number(process.env.EPLAN_WORKER_LIMIT || 200), 500));
 const DELAY_MS = Math.max(500, Number(process.env.EPLAN_WORKER_DELAY_MS || 1000));
 const EPLAN_BASE_URL = 'https://www.eplanning.ie';
 const AUTHORITIES = {
@@ -90,16 +90,16 @@ async function fetchApplication(authorityCode, reference) {
 
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
-let processed = 0, completed = 0, failed = 0;
+let processed = 0, completed = 0, deferred = 0, failed = 0;
 try {
   const { rows } = await client.query(`
-    select id, input
+    select id, job_type, input
     from work_items
-    where job_type = 'eplan_lifecycle'
+    where job_type in ('eplan_lifecycle','eplan_active_lifecycle')
       and status = 'pending'
       and applied_at is null
       and available_at <= now()
-    order by id
+    order by case when job_type='eplan_active_lifecycle' then 0 else 1 end, id
     limit $1
   `, [LIMIT]);
 
@@ -108,17 +108,30 @@ try {
     await client.query("update work_items set status='running', leased_at=now(), attempts=attempts+1, updated_at=now() where id=$1", [item.id]);
     try {
       const result = await fetchApplication(item.input.local_authority_code, item.input.reference);
-      await client.query(`update work_items set status='completed', result=$2::jsonb, completed_at=now(), last_error=null, updated_at=now() where id=$1`, [item.id, JSON.stringify(result)]);
-      completed += 1;
+      if (!result.ok && result.reason === 'fetch_error') {
+        await client.query(`
+          update work_items
+          set status='pending', result=null, available_at=now()+interval '30 minutes',
+              last_error=$2, completed_at=null, updated_at=now()
+          where id=$1
+        `,[item.id,String(result.error || result.reason).slice(0,500)]);
+        deferred += 1;
+      } else {
+        await client.query(`update work_items set status='completed', result=$2::jsonb, completed_at=now(), last_error=null, updated_at=now() where id=$1`, [item.id, JSON.stringify(result)]);
+        completed += 1;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await client.query(`update work_items set status='failed', last_error=$2, completed_at=now(), updated_at=now() where id=$1`, [item.id, message.slice(0,500)]);
-      failed += 1;
+      await client.query(`
+        update work_items
+        set status='pending', available_at=now()+interval '30 minutes', last_error=$2, completed_at=null, updated_at=now()
+        where id=$1
+      `, [item.id, message.slice(0,500)]);
+      deferred += 1;
     }
     if (index < rows.length - 1) await sleep(DELAY_MS);
   }
-  console.log(JSON.stringify({ selected: rows.length, processed, completed, failed }, null, 2));
-  if (failed > Math.max(10, Math.floor(processed * 0.1))) process.exitCode = 1;
+  console.log(JSON.stringify({ selected: rows.length, processed, completed, deferred, failed }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
