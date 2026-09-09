@@ -1,4 +1,4 @@
-name: Process queued planning description repairs
+name: "[PUBLIC] Process queued planning description repairs"
 
 on:
   push:
