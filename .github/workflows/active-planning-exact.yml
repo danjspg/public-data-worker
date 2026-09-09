@@ -1,6 +1,8 @@
 name: Process active Planning exact source checks
 
 on:
+  schedule:
+    - cron: "15 * * * *"
   push:
     branches: [main]
     paths:
