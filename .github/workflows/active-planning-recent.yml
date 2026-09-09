@@ -1,4 +1,4 @@
-name: Process recent Planning discovery
+name: "[PUBLIC] Process recent Planning discovery"
 
 on:
   schedule:
