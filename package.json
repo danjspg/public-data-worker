@@ -12,7 +12,8 @@
     "work:eplan-lifecycle": "node src/eplan-lifecycle.mjs",
     "work:planning-descriptions": "node src/planning-descriptions.mjs",
     "work:active-planning": "node src/active-planning-exact.mjs",
-    "work:active-agile": "node src/active-planning-agile.mjs"
+    "work:active-agile": "node src/active-planning-agile.mjs",
+    "work:active-recent": "node src/active-planning-recent.mjs"
   },
   "dependencies": {
     "pg": "^8.13.3"
