@@ -1,6 +1,8 @@
 name: Process active Agile Planning source checks
 
 on:
+  schedule:
+    - cron: "25 * * * *"
   push:
     branches: [main]
     paths:
