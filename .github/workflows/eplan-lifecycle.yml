@@ -1,4 +1,4 @@
-name: Process queued ePlan lifecycle work
+name: "[PUBLIC] Process queued ePlan lifecycle work"
 
 on:
   push:
