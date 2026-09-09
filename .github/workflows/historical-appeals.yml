@@ -1,8 +1,6 @@
 name: Historical appeal reference catch-up
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: "17 0,8,16 * * *"
   workflow_dispatch:
