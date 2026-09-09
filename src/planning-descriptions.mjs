@@ -22,6 +22,10 @@ const SOURCE_NAMES = {
 };
 const clean = (v) => String(v ?? '').replace(/\s+/g,' ').trim();
 const esc = (v) => clean(v).replaceAll("'", "''");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function isTransientMessage(message) {
+  return /HTTP (408|425|429|500|502|503|504)|timeout|abort|fetch failed|ECONN|socket|temporar|rate limit|too many/i.test(String(message || ''));
+}
 async function fetchJson(url, headers={}) {
   let last;
   for (let attempt=1; attempt<=4; attempt++) {
@@ -31,7 +35,7 @@ async function fetchJson(url, headers={}) {
       last = new Error(`HTTP ${response.status}`);
       if (![408,425,429,500,502,503,504].includes(response.status)) break;
     } catch (error) { last=error; }
-    if (attempt<4) await new Promise(r=>setTimeout(r,attempt*750));
+    if (attempt<4) await sleep(attempt*750);
   }
   throw last || new Error('request failed');
 }
@@ -39,10 +43,25 @@ function agileId(config,input){
   if(config.detailIdFromSourceUrl){const m=String(input.source_url||'').match(/\/application-details\/(\d+)/); if(m) return Number(m[1]);}
   const n=Number(input.source_application_id); return Number.isInteger(n)?n:null;
 }
+async function deferItem(client, itemId, message) {
+  await client.query(`
+    update work_items
+    set status='pending', attempts=attempts+1, last_error=$2,
+        available_at=now() + interval '30 minutes', completed_at=null, updated_at=now()
+    where id=$1
+  `,[itemId,String(message).slice(0,500)]);
+}
+async function failItem(client, itemId, message) {
+  await client.query(`
+    update work_items
+    set status='failed', attempts=attempts+1, last_error=$2, completed_at=now(), updated_at=now()
+    where id=$1
+  `,[itemId,String(message).slice(0,500)]);
+}
 
 const client = new Client({ connectionString, ssl:{ rejectUnauthorized:false } });
 await client.connect();
-let completed=0, failed=0;
+let completed=0, deferred=0, failed=0;
 try {
   const { rows } = await client.query(`select id,input from work_items where job_type='planning_description' and status='pending' and applied_at is null and available_at<=now() order by id limit $1`, [LIMIT]);
   const groups = new Map();
@@ -57,17 +76,18 @@ try {
           const json=await fetchJson(`${AGILE_DETAIL}/${id}`,{ 'x-client':agile.client,'x-product':'CITIZENPORTAL','x-service':'PA' });
           const proposal=clean(json.fullProposal)||null;
           await client.query(`update work_items set status='completed',result=$2::jsonb,completed_at=now(),last_error=null,updated_at=now() where id=$1`,[item.id,JSON.stringify({ok:true,proposal,source:'agile_detail'})]); completed++;
-          await new Promise(r=>setTimeout(r,150));
+          await sleep(150);
         } catch(error) {
           const msg=error instanceof Error?error.message:String(error);
-          await client.query(`update work_items set status='failed',last_error=$2,completed_at=now(),updated_at=now() where id=$1`,[item.id,msg.slice(0,500)]); failed++;
+          if (isTransientMessage(msg)) { await deferItem(client,item.id,msg); deferred++; }
+          else { await failItem(client,item.id,msg); failed++; }
         }
       }
       continue;
     }
     const sourceName = SOURCE_NAMES[code];
     if (!sourceName) {
-      for (const item of items) { await client.query(`update work_items set status='failed',last_error='unsupported_authority',completed_at=now(),updated_at=now() where id=$1`,[item.id]); failed++; }
+      for (const item of items) { await failItem(client,item.id,'unsupported_authority'); failed++; }
       continue;
     }
     for (let offset=0; offset<items.length; offset+=50) {
@@ -82,9 +102,15 @@ try {
         const byId=new Map(),byRef=new Map();
         for(const f of json.features||[]){const a=f.attributes||{};const id=Number(a.OBJECTID);if(Number.isInteger(id))byId.set(id,a);byRef.set(clean(a.ApplicationNumber),a);}
         for(const item of batch){const sid=Number(item.input.source_application_id);const attrs=(Number.isInteger(sid)?byId.get(sid):null)||byRef.get(clean(item.input.reference));const result={ok:true,proposal:clean(attrs?.DevelopmentDescription)||null,source:'national_arcgis'};await client.query(`update work_items set status='completed',result=$2::jsonb,completed_at=now(),last_error=null,updated_at=now() where id=$1`,[item.id,JSON.stringify(result)]);completed++;}
-      } catch(error){const msg=error instanceof Error?error.message:String(error);for(const item of batch){await client.query(`update work_items set status='failed',last_error=$2,completed_at=now(),updated_at=now() where id=$1`,[item.id,msg.slice(0,500)]);failed++;}}
+      } catch(error){
+        const msg=error instanceof Error?error.message:String(error);
+        for(const item of batch){
+          if (isTransientMessage(msg)) { await deferItem(client,item.id,msg); deferred++; }
+          else { await failItem(client,item.id,msg); failed++; }
+        }
+      }
     }
   }
-  console.log(JSON.stringify({selected:rows.length,completed,failed},null,2));
+  console.log(JSON.stringify({selected:rows.length,completed,deferred,failed},null,2));
   if(failed>Math.max(25,Math.floor(rows.length*0.1))) process.exitCode=1;
 } finally { await client.end().catch(()=>{}); }
