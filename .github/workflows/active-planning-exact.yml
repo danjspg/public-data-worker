@@ -36,3 +36,5 @@ jobs:
           ACTIVE_PLANNING_WORKER_LIMIT: "500"
           ACTIVE_PLANNING_SOURCE_BATCH: "150"
         run: npm run work:active-planning
+
+# Bounded 500-row canary until the private apply path is validated end to end.
