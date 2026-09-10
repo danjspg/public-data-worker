@@ -1,8 +1,12 @@
 name: Backfill planning professionals from public sources
 
 on:
+  push:
+    paths:
+      - .github/workflows/planning-professionals.yml
+      - src/planning-professionals.mjs
   schedule:
-    - cron: "25 0 * * *"
+    - cron: "25 */6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -58,7 +62,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
       - run: npm install --no-audit --no-fund
       - name: Scrape one authority backwards from newest unchecked blank
         env:
