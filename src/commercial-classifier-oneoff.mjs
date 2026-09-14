@@ -41,8 +41,15 @@ function normalizeAuthorityName(value) {
 }
 
 function authorityMatches(code, sourceAuthority) {
-  const expected=SOURCE_NAMES[code];
-  return Boolean(expected) && normalizeAuthorityName(expected)===normalizeAuthorityName(sourceAuthority);
+  const actual=normalizeAuthorityName(sourceAuthority);
+  const aliases={
+    LIMERICK:[
+      'Limerick City and County Council',
+      'Limerick County Council'
+    ]
+  };
+  const expectedValues=aliases[code] || [SOURCE_NAMES[code]];
+  return expectedValues.filter(Boolean).some((value)=>normalizeAuthorityName(value)===actual);
 }
 const SOURCE_NAMES = {
   CORKCOCO:'Cork County Council', CORKCITY:'Cork City Council', DUBLINCITY:'Dublin City Council',
@@ -188,7 +195,7 @@ async function fetchJson(url, options = {}) {
 
 async function fetchArcgisRows(targets) {
   const byKey=new Map();
-  const arcTargets=targets.filter(usesArcgis);
+  const arcTargets=targets.filter((target)=>usesArcgis(target) || usesAgile(target));
 
   for (const batch of chunk(arcTargets,75)) {
     const ids=batch.map((t)=>Number(t.source_application_id)).filter(Number.isInteger);
