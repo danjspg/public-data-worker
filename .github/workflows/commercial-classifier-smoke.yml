@@ -1,0 +1,40 @@
+name: "[PUBLIC ONE-OFF] Commercial classifier smoke"
+
+on:
+  push:
+    branches:
+      - oneoff/commercial-classifier-active
+    paths:
+      - ".github/commercial-classifier-smoke-trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-commercial-classifier-smoke
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Classify smoke shard
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COMMERCIAL_CLASSIFIER_MODE: classify
+          COMMERCIAL_CLASSIFIER_SHARD: ${{ matrix.shard }}
+          COMMERCIAL_CLASSIFIER_LIMIT: "8"
+          COMMERCIAL_CLASSIFIER_BATCH_SIZE: "4"
+        run: npm run work:commercial-classifier-oneoff
