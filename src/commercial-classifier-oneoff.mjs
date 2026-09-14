@@ -185,6 +185,33 @@ async function fetchArcgisRows(targets) {
       }
     }
   }
+
+  const unresolved=national.filter((target)=>
+    !byKey.has(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`)
+  );
+  const fallbackGroups=Map.groupBy(unresolved,(target)=>target.local_authority_code);
+  for(const [authority,items] of fallbackGroups){
+    const sourceName=SOURCE_NAMES[authority];
+    if(!sourceName) continue;
+    for(const batch of chunk(items,35)){
+      const refs=batch.map((target)=>clean(target.reference)).filter(Boolean);
+      if(!refs.length) continue;
+      const where=`PlanningAuthority='${esc(sourceName)}' AND (${refs.map((ref)=>`ApplicationNumber='${esc(ref)}'`).join(' OR ')})`;
+      const params=new URLSearchParams({
+        where,
+        outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
+        returnGeometry:'false',
+        resultRecordCount:String(Math.max(100,refs.length*2)),
+        f:'json'
+      });
+      const json=await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
+      for(const feature of json.features || []){
+        const row=feature.attributes || {};
+        byKey.set(`${authority}||${clean(row.ApplicationNumber).toUpperCase()}`,row);
+      }
+    }
+  }
+
   return byKey;
 }
 
