@@ -7,6 +7,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const WORKER_DATABASE_URL = process.env.WORKER_DATABASE_URL;
 const SHARD = Math.max(0, Math.min(11, Number(process.env.COMMERCIAL_CLASSIFIER_SHARD || 0)));
 const LIMIT = Math.max(0, Number(process.env.COMMERCIAL_CLASSIFIER_LIMIT || 0));
+const SHARD_COUNT = 12;
+const MANIFEST_PATH = process.env.COMMERCIAL_CLASSIFIER_MANIFEST || 'data/commercial-classifier-active-manifest.json';
 const MODE = String(process.env.COMMERCIAL_CLASSIFIER_MODE || 'dry-run');
 const BATCH_SIZE = Math.max(1, Math.min(8, Number(process.env.COMMERCIAL_CLASSIFIER_BATCH_SIZE || 8)));
 const MODEL = 'gpt-5.6-terra';
@@ -439,12 +441,17 @@ async function storeResults(client, sourceRows, classifications) {
 }
 
 async function main() {
-  const targetPath=`data/commercial-classifier-active-targets-${String(SHARD).padStart(2,'0')}.json`;
-  const targetDoc=JSON.parse(await fs.readFile(targetPath,'utf8'));
-  let targets=targetDoc.rows || [];
+  const manifest=JSON.parse(await fs.readFile(MANIFEST_PATH,'utf8'));
+  const allTargets=(manifest.rows || [])
+    .map((target)=>({
+      ...target,
+      application_id: target.application_id || `${target.local_authority_code}|${clean(target.reference).toUpperCase()}`
+    }))
+    .sort((a,b)=>`${a.local_authority_code}|${a.reference}`.localeCompare(`${b.local_authority_code}|${b.reference}`));
+  let targets=allTargets.filter((_,index)=>index % SHARD_COUNT === SHARD);
   if (LIMIT>0) targets=targets.slice(0,LIMIT);
 
-  console.log(JSON.stringify({mode:MODE,shard:SHARD,targets:targets.length,model:MODEL,taxonomy:TAXONOMY_VERSION}));
+  console.log(JSON.stringify({mode:MODE,shard:SHARD,shard_count:SHARD_COUNT,manifest_rows:allTargets.length,targets:targets.length,model:MODEL,taxonomy:TAXONOMY_VERSION}));
 
   const fetched=await sourceRows(targets);
   console.log(JSON.stringify({shard:SHARD,source_rows:fetched.rows.length,missing_source:fetched.missing,source_warnings:fetched.sourceWarnings}));
