@@ -238,7 +238,24 @@ async function fetchArcgisRows(targets) {
         clean(candidate.ApplicationNumber).toUpperCase()===clean(target.reference).toUpperCase()
         && authorityMatches(target.local_authority_code,candidate.PlanningAuthority)
       );
-      if (row) byKey.set(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`,row);
+      if (row) {
+        byKey.set(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`,row);
+      } else {
+        const sameReferenceAuthorities=[...new Set(
+          features
+            .filter((candidate)=>clean(candidate.ApplicationNumber).toUpperCase()===clean(target.reference).toUpperCase())
+            .map((candidate)=>clean(candidate.PlanningAuthority))
+            .filter(Boolean)
+        )];
+        if (sameReferenceAuthorities.length) {
+          console.warn(JSON.stringify({
+            phase:'arcgis_authority_mismatch',
+            expected_authority:target.local_authority_code,
+            reference:target.reference,
+            source_authorities:sameReferenceAuthorities
+          }));
+        }
+      }
     }
   }
 
