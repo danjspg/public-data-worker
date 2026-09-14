@@ -171,7 +171,8 @@ function collapseAncestors(categories) {
 function defaultAlertEligible(item) {
   return ['new_opportunity','existing_site_expansion','redevelopment'].includes(item.opportunity_type)
     && ['high','very_high'].includes(item.confidence)
-    && collapseAncestors(item.commercial_categories).length > 0;
+    && collapseAncestors(item.commercial_categories).length > 0
+    && !clean(item.suppression_reason);
 }
 
 async function fetchJson(url, options = {}) {
