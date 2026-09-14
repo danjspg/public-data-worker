@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-09-14T22:10:05.279Z",
+  "reason": "Smoke test richer public proposal retrieval before 537-row repair.",
+  "rows": [
+    {
+      "application_id": "CORKCITY|26/44920",
+      "local_authority_code": "CORKCITY",
+      "reference": "26/44920",
+      "source_application_id": 13090597,
+      "source_url": "https://planning.agileapplications.ie/corkcity/search-applications/results?criteria=%7B%22query%22%3A%2226%2F44920%22%7D",
+      "source_api_url": "https://planningapi.agileapplications.ie/api/application/search",
+      "registration_date": "2026-07-21",
+      "normalized_status": "further_information_requested",
+      "selection_reason": "source-quality-smoke"
+    },
+    {
+      "application_id": "CORKCOCO|26/1099",
+      "local_authority_code": "CORKCOCO",
+      "reference": "26/1099",
+      "source_application_id": 1000397,
+      "source_url": "https://planning.agileapplications.ie/corkcoco/search-applications/results?criteria=%7B%22query%22%3A%2226%2F1099%22%7D",
+      "source_api_url": "https://planningapi.agileapplications.ie/api/application/search",
+      "registration_date": "2026-04-29",
+      "normalized_status": "further_information_requested",
+      "selection_reason": "source-quality-smoke"
+    },
+    {
+      "application_id": "DLR|LRD26A/0418/WEB",
+      "local_authority_code": "DLR",
+      "reference": "LRD26A/0418/WEB",
+      "source_application_id": 238612,
+      "source_url": "https://planning.agileapplications.ie/dunlaoghaire/search-applications/results?criteria=%7B%22query%22%3A%22LRD26A%2F0418%2FWEB%22%7D",
+      "source_api_url": "https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query",
+      "registration_date": "2026-06-05",
+      "normalized_status": "decision_made",
+      "selection_reason": "source-quality-smoke"
+    },
+    {
+      "application_id": "FINGAL|F26A/0506E",
+      "local_authority_code": "FINGAL",
+      "reference": "F26A/0506E",
+      "source_application_id": 255002,
+      "source_url": "https://planning.agileapplications.ie/fingal/search-applications/results?criteria=%7B%22query%22%3A%22F26A%2F0506E%22%7D",
+      "source_api_url": "https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query",
+      "registration_date": "2026-06-15",
+      "normalized_status": "further_information_requested",
+      "selection_reason": "source-quality-smoke"
+    },
+    {
+      "application_id": "WEXFORD|20251194",
+      "local_authority_code": "WEXFORD",
+      "reference": "20251194",
+      "source_application_id": 463551,
+      "source_url": "https://planning.agileapplications.ie/wexford/application-details/129761",
+      "source_api_url": "https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query",
+      "registration_date": "2025-09-22",
+      "normalized_status": "appealed",
+      "selection_reason": "source-quality-smoke"
+    }
+  ]
+}
