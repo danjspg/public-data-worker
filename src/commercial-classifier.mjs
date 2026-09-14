@@ -16,8 +16,16 @@ if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required');
 
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
 const AGILE_SEARCH = 'https://planningapi.agileapplications.ie/api/application/search';
+const AGILE_DETAIL = 'https://planningapi.agileapplications.ie/api/application';
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const AGILE = new Set(['CORKCOCO', 'CORKCITY', 'WEXFORD']);
+const AGILE_CONFIG = {
+  CORKCOCO:{client:'CORKCOCO'},
+  CORKCITY:{client:'CORKCITY'},
+  WEXFORD:{client:'WEXFORD',detailIdFromSourceUrl:true},
+  DLR:{client:'DLR',resolveBySearch:true},
+  FINGAL:{client:'FG',resolveBySearch:true}
+};
 const KILDARE_API = 'https://webgeo.kildarecoco.ie/planningenquiry/Public/GetPlanningFileNameAddressResult';
 
 const sourceUrl = (target) => String(target?.source_api_url || '');
@@ -289,21 +297,52 @@ async function fetchKildareRows(targets) {
   return byKey;
 }
 
+function agileHeaders(client) {
+  return {
+    'User-Agent':'OpenList public commercial classifier',
+    'x-client':client,
+    'x-product':'CITIZENPORTAL',
+    'x-service':'PA'
+  };
+}
+
+function agileDetailId(target, config) {
+  if (config?.detailIdFromSourceUrl) {
+    const match=String(target.source_url || '').match(/\/application-details\/(\d+)/);
+    if (match) return Number(match[1]);
+  }
+  if (usesAgile(target)) {
+    const id=Number(target.source_application_id);
+    if (Number.isInteger(id)) return id;
+  }
+  return null;
+}
+
 async function fetchAgileRow(target) {
-  const params=new URLSearchParams({reference:String(target.reference).trim()});
-  const json=await fetchJson(`${AGILE_SEARCH}?${params}`,{
-    headers:{
-      'User-Agent':'OpenList public commercial classifier',
-      'x-client':target.local_authority_code,
-      'x-product':'CITIZENPORTAL',
-      'x-service':'PA'
-    }
+  const config=AGILE_CONFIG[target.local_authority_code];
+  if (!config) return null;
+
+  let detailId=agileDetailId(target,config);
+  let searchRow=null;
+  if (!detailId || config.resolveBySearch) {
+    const params=new URLSearchParams({reference:String(target.reference).trim()});
+    const json=await fetchJson(`${AGILE_SEARCH}?${params}`,{headers:agileHeaders(config.client)});
+    await sleep(125);
+    const wanted=clean(target.reference).replace(/\\s+/g,'').toUpperCase();
+    searchRow=(json?.results || []).find((row)=>
+      clean(row?.reference).replace(/\\s+/g,'').toUpperCase()===wanted
+    ) || null;
+    const searchId=Number(searchRow?.id ?? searchRow?.applicationId);
+    if (Number.isInteger(searchId)) detailId=searchId;
+  }
+
+  if (!detailId) return searchRow;
+  const detail=await fetchJson(`${AGILE_DETAIL}/${detailId}`,{
+    headers:agileHeaders(config.client),
+    allowNotFound:true
   });
   await sleep(125);
-  const wanted=clean(target.reference).replace(/\\s+/g,'').toUpperCase();
-  return (json?.results || []).find((row)=>
-    clean(row?.reference).replace(/\\s+/g,'').toUpperCase()===wanted
-  ) || null;
+  return detail || searchRow;
 }
 
 async function sourceRows(targets) {
@@ -331,15 +370,15 @@ async function sourceRows(targets) {
       sourceKind='kildare-register';
     }
 
-    if (usesAgile(target)) {
+    if (AGILE_CONFIG[target.local_authority_code]) {
       try {
         const detail = await fetchAgileRow(target);
         if (detail) {
-          proposal = clean(detail.proposal || proposal);
-          location = clean(detail.location || location);
-          applicationType = clean(detail.applicationType || applicationType);
-          applicantName = clean(detail.applicantSurname || applicantName);
-          sourceKind = 'agile-search';
+          proposal = clean(detail.fullProposal || detail.proposal || detail.description || detail.developmentDescription || proposal);
+          location = clean(detail.siteAddress || detail.developmentAddress || (typeof detail.location === 'string' ? detail.location : '') || location);
+          applicationType = clean(detail.applicationType || detail.type || applicationType);
+          applicantName = clean(detail.applicantName || detail.applicantSurname || applicantName);
+          sourceKind = detail.fullProposal ? 'agile-detail' : 'agile-search';
         }
       } catch (error) {
         sourceWarnings += 1;
