@@ -1,0 +1,39 @@
+name: "[PUBLIC ONE-OFF] Commercial classifier active wave"
+
+on:
+  push:
+    branches:
+      - oneoff/commercial-classifier-active
+    paths:
+      - ".github/commercial-classifier-wave-trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-commercial-classifier-active-wave
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        shard: [0,1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Classify active commercial shard
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COMMERCIAL_CLASSIFIER_MODE: classify
+          COMMERCIAL_CLASSIFIER_SHARD: ${{ matrix.shard }}
+          COMMERCIAL_CLASSIFIER_BATCH_SIZE: "8"
+        run: npm run work:commercial-classifier-oneoff
