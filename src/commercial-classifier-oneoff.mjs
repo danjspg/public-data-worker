@@ -23,6 +23,27 @@ const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/serv
 const AGILE_SEARCH = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const AGILE = new Set(['CORKCOCO', 'CORKCITY', 'WEXFORD']);
+const KILDARE_API = 'https://webgeo.kildarecoco.ie/planningenquiry/Public/GetPlanningFileNameAddressResult';
+
+const sourceUrl = (target) => String(target?.source_api_url || '');
+const usesArcgis = (target) => sourceUrl(target).includes('services.arcgis.com');
+const usesAgile = (target) => sourceUrl(target).includes('planningapi.agileapplications.ie');
+const usesKildare = (target) => sourceUrl(target).includes('webgeo.kildarecoco.ie');
+
+function normalizeAuthorityName(value) {
+  return clean(value)
+    .toLowerCase()
+    .replaceAll('&','and')
+    .replace(/[^a-z0-9]+/g,' ')
+    .replace(/\bcouncil\b/g,'')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function authorityMatches(code, sourceAuthority) {
+  const expected=SOURCE_NAMES[code];
+  return Boolean(expected) && normalizeAuthorityName(expected)===normalizeAuthorityName(sourceAuthority);
+}
 const SOURCE_NAMES = {
   CORKCOCO:'Cork County Council', CORKCITY:'Cork City Council', DUBLINCITY:'Dublin City Council',
   FINGAL:'Fingal County Council', SOUTHDUBLIN:'South Dublin County Council',
@@ -166,58 +187,84 @@ async function fetchJson(url, options = {}) {
 }
 
 async function fetchArcgisRows(targets) {
-  const byKey = new Map();
-  const national = targets.filter((t) => !AGILE.has(t.local_authority_code));
-  const groups = Map.groupBy(national,(t)=>t.local_authority_code);
+  const byKey=new Map();
+  const arcTargets=targets.filter(usesArcgis);
 
-  for (const [authority,items] of groups) {
-    const sourceName = SOURCE_NAMES[authority];
-    if (!sourceName) continue;
+  for (const batch of chunk(arcTargets,75)) {
+    const ids=batch.map((t)=>Number(t.source_application_id)).filter(Number.isInteger);
+    if (!ids.length) continue;
 
-    // Fast path: source OBJECTID when still current.
-    for (const batch of chunk(items,75)) {
-      const ids = batch.map((t)=>Number(t.source_application_id)).filter(Number.isInteger);
-      if (ids.length) {
-        const where = `PlanningAuthority='${esc(sourceName)}' AND OBJECTID IN (${ids.join(',')})`;
-        const params = new URLSearchParams({
-          where,
-          outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
-          returnGeometry:'false',
-          resultRecordCount:String(Math.max(200,ids.length*2)),
-          f:'json'
-        });
-        const json = await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
-        for (const feature of json.features || []) {
-          const row = feature.attributes || {};
-          byKey.set(`${authority}||${clean(row.ApplicationNumber).toUpperCase()}`,row);
-        }
-      }
+    // OBJECTID is layer-global, so do not add an authority predicate here.
+    // Verify both reference and authority after retrieval.
+    const params=new URLSearchParams({
+      where:`OBJECTID IN (${ids.join(',')})`,
+      outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
+      returnGeometry:'false',
+      resultRecordCount:String(Math.max(200,ids.length*2)),
+      f:'json'
+    });
+    const json=await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
+    const byId=new Map((json.features||[]).map((feature)=>[Number(feature?.attributes?.OBJECTID),feature?.attributes||{}]));
+
+    for (const target of batch) {
+      const row=byId.get(Number(target.source_application_id));
+      if (!row) continue;
+      if (clean(row.ApplicationNumber).toUpperCase()!==clean(target.reference).toUpperCase()) continue;
+      if (!authorityMatches(target.local_authority_code,row.PlanningAuthority)) continue;
+      byKey.set(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`,row);
     }
+  }
 
-    // Durable fallback: OBJECTIDs can drift between source refreshes, but planning
-    // authority + application reference is the public canonical identity.
-    const unresolved = items.filter((item)=>
-      !byKey.has(`${authority}||${clean(item.reference).toUpperCase()}`)
-    );
-    for (const batch of chunk(unresolved,30)) {
-      if (!batch.length) continue;
-      const referenceClause=batch
-        .map((item)=>`ApplicationNumber='${esc(item.reference)}'`)
-        .join(' OR ');
-      const where=`PlanningAuthority='${esc(sourceName)}' AND (${referenceClause})`;
-      const params=new URLSearchParams({
-        where,
-        outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
-        returnGeometry:'false',
-        resultRecordCount:String(Math.max(100,batch.length*3)),
-        f:'json'
-      });
-      const json=await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
-      for (const feature of json.features || []) {
-        const row=feature.attributes || {};
-        byKey.set(`${authority}||${clean(row.ApplicationNumber).toUpperCase()}`,row);
-      }
+  // Reference fallback for source refreshes where OBJECTIDs have changed.
+  const unresolved=arcTargets.filter((target)=>
+    !byKey.has(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`)
+  );
+  for (const batch of chunk(unresolved,30)) {
+    if (!batch.length) continue;
+    const referenceClause=[...new Set(batch.map((item)=>clean(item.reference)))]
+      .map((reference)=>`ApplicationNumber='${esc(reference)}'`)
+      .join(' OR ');
+    const params=new URLSearchParams({
+      where:`(${referenceClause})`,
+      outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
+      returnGeometry:'false',
+      resultRecordCount:String(Math.max(150,batch.length*8)),
+      f:'json'
+    });
+    const json=await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
+    const features=(json.features||[]).map((feature)=>feature?.attributes||{});
+    for (const target of batch) {
+      const row=features.find((candidate)=>
+        clean(candidate.ApplicationNumber).toUpperCase()===clean(target.reference).toUpperCase()
+        && authorityMatches(target.local_authority_code,candidate.PlanningAuthority)
+      );
+      if (row) byKey.set(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`,row);
     }
+  }
+
+  return byKey;
+}
+
+async function fetchKildareRows(targets) {
+  const wanted=targets.filter(usesKildare);
+  const byKey=new Map();
+  if (!wanted.length) return byKey;
+
+  const params=new URLSearchParams({
+    name:'',
+    address:'',
+    devDesc:'',
+    startDate:'01/01/1900',
+    endDate:'31/12/2099'
+  });
+  const rows=await fetchJson(`${KILDARE_API}?${params}`,{
+    headers:{'User-Agent':'OpenList public commercial classifier (+https://www.openlist.ie)'}
+  });
+  if (!Array.isArray(rows)) throw new Error('Unexpected Kildare source response');
+  const byRef=new Map(rows.map((row)=>[clean(row?.FileNumber).replace(/\s+/g,''),row]));
+  for (const target of wanted) {
+    const row=byRef.get(clean(target.reference).replace(/\s+/g,''));
+    if (row) byKey.set(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`,row);
   }
   return byKey;
 }
@@ -241,6 +288,7 @@ async function fetchAgileRow(target) {
 
 async function sourceRows(targets) {
   const arcgis = await fetchArcgisRows(targets);
+  const kildare = await fetchKildareRows(targets);
   const rows = [];
   let missing = 0;
   let sourceWarnings = 0;
@@ -254,7 +302,16 @@ async function sourceRows(targets) {
     let applicantName = [national?.ApplicantForename,national?.ApplicantSurname].map(clean).filter(Boolean).join(' ');
     let sourceKind = national ? 'arcgis' : null;
 
-    if (AGILE.has(target.local_authority_code)) {
+    const kildareRow=kildare.get(key);
+    if (kildareRow) {
+      proposal=clean(kildareRow.DevelopmentDescription);
+      location=clean(kildareRow.DevelopmentAddress);
+      applicationType=clean(kildareRow.Type);
+      applicantName=clean(kildareRow.ApplicantName);
+      sourceKind='kildare-register';
+    }
+
+    if (usesAgile(target)) {
       try {
         const detail = await fetchAgileRow(target);
         if (detail) {
