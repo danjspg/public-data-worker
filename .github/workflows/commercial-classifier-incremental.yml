@@ -27,8 +27,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - name: Classify queued notable applications
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
