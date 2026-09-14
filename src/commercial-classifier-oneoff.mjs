@@ -19,7 +19,7 @@ if (!WORKER_DATABASE_URL) throw new Error('WORKER_DATABASE_URL is required');
 if (MODE === 'classify' && !OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required for classify mode');
 
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
-const AGILE_DETAIL = 'https://planningapi.agileapplications.ie/api/application';
+const AGILE_SEARCH = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const AGILE = new Set(['CORKCOCO', 'CORKCITY', 'WEXFORD']);
 const SOURCE_NAMES = {
@@ -27,7 +27,7 @@ const SOURCE_NAMES = {
   FINGAL:'Fingal County Council', SOUTHDUBLIN:'South Dublin County Council',
   DLR:'Dun Laoghaire Rathdown County Council', KILDARE:'Kildare County Council',
   GALWAYCOCO:'Galway County Council', GALWAYCITY:'Galway City Council', MEATH:'Meath County Council',
-  WICKLOW:'Wicklow County Council', LIMERICK:'Limerick County Council',
+  WICKLOW:'Wicklow County Council', LIMERICK:'Limerick City and County Council',
   WATERFORD:'Waterford City and County Council', DONEGAL:'Donegal County Council',
   WEXFORD:'Wexford County Council', TIPPERARY:'Tipperary County Council', KERRY:'Kerry County Council',
   MAYO:'Mayo County Council', CLARE:'Clare County Council', LOUTH:'Louth County Council',
@@ -188,25 +188,21 @@ async function fetchArcgisRows(targets) {
   return byKey;
 }
 
-function wexfordDetailId(target) {
-  const match = String(target.source_url || '').match(/\/application-details\/(\d+)/);
-  return match ? Number(match[1]) : Number(target.source_application_id);
-}
-
-async function fetchAgileDetail(target) {
-  const id = target.local_authority_code === 'WEXFORD' ? wexfordDetailId(target) : Number(target.source_application_id);
-  if (!Number.isInteger(id)) return null;
-  const json = await fetchJson(`${AGILE_DETAIL}/${id}`,{
+async function fetchAgileRow(target) {
+  const params=new URLSearchParams({reference:String(target.reference).trim()});
+  const json=await fetchJson(`${AGILE_SEARCH}?${params}`,{
     headers:{
       'User-Agent':'OpenList public commercial classifier',
       'x-client':target.local_authority_code,
       'x-product':'CITIZENPORTAL',
       'x-service':'PA'
-    },
-    allowNotFound:true
+    }
   });
   await sleep(125);
-  return json;
+  const wanted=clean(target.reference).replace(/\\s+/g,'').toUpperCase();
+  return (json?.results || []).find((row)=>
+    clean(row?.reference).replace(/\\s+/g,'').toUpperCase()===wanted
+  ) || null;
 }
 
 async function sourceRows(targets) {
@@ -226,13 +222,13 @@ async function sourceRows(targets) {
 
     if (AGILE.has(target.local_authority_code)) {
       try {
-        const detail = await fetchAgileDetail(target);
+        const detail = await fetchAgileRow(target);
         if (detail) {
-          proposal = clean(detail.fullProposal || detail.proposal || detail.description || detail.developmentDescription || proposal);
-          location = clean(detail.siteAddress || detail.developmentAddress || (typeof detail.location === 'string' ? detail.location : '') || location);
-          applicationType = clean(detail.applicationType?.description || detail.applicationType || detail.type || applicationType);
-          applicantName = clean(detail.applicantName || detail.applicant?.name || applicantName);
-          sourceKind = 'agile-detail';
+          proposal = clean(detail.proposal || proposal);
+          location = clean(detail.location || location);
+          applicationType = clean(detail.applicationType || applicationType);
+          applicantName = clean(detail.applicantSurname || applicantName);
+          sourceKind = 'agile-search';
         }
       } catch (error) {
         sourceWarnings += 1;
