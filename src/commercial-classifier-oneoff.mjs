@@ -10,8 +10,8 @@ const LIMIT = Math.max(0, Number(process.env.COMMERCIAL_CLASSIFIER_LIMIT || 0));
 const MODE = String(process.env.COMMERCIAL_CLASSIFIER_MODE || 'dry-run');
 const BATCH_SIZE = Math.max(1, Math.min(8, Number(process.env.COMMERCIAL_CLASSIFIER_BATCH_SIZE || 8)));
 const MODEL = 'gpt-5.6-terra';
-const TAXONOMY_VERSION = 'commercial-v1.1';
-const CLASSIFIER_SOURCE = 'public-worker-commercial-v1.1';
+const TAXONOMY_VERSION = 'commercial-v1.2';
+const CLASSIFIER_SOURCE = 'public-worker-commercial-v1.2';
 
 if (!WORKER_DATABASE_URL) throw new Error('WORKER_DATABASE_URL is required');
 if (MODE === 'classify' && !OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required for classify mode');
@@ -47,8 +47,10 @@ const TAXONOMY = [
   ['food.drive-through','food-hospitality','Drive-through','Drive-through restaurant, cafe or food outlet',null],
   ['food.coffee-shop','food-hospitality','Coffee shop','Coffee shop or cafe-led commercial development',null],
   ['food.restaurant','food-hospitality','Restaurant','Restaurant or substantial food-service premises',null],
+  ['food.pub-bar','food-hospitality','Pub / bar','Public house, bar or substantial licensed-premises development',null],
   ['hospitality.hotel','food-hospitality','Hotel','Hotel development, redevelopment or major expansion',null],
   ['hospitality.aparthotel','food-hospitality','Aparthotel','Aparthotel or serviced-apartment hospitality scheme','hospitality.hotel'],
+  ['hospitality.short-term-accommodation','food-hospitality','Short-term accommodation','Commercial short-stay, holiday or serviced accommodation scheme',null],
   ['residential.10-49','residential','10-49 homes','Residential scheme containing 10 to 49 homes',null],
   ['residential.50-99','residential','50-99 homes','Residential scheme containing 50 to 99 homes',null],
   ['residential.100-249','residential','100-249 homes','Residential scheme containing 100 to 249 homes',null],
@@ -60,11 +62,16 @@ const TAXONOMY = [
   ['logistics.warehouse','industrial-logistics','Warehouse','Warehouse-led commercial development',null],
   ['logistics.distribution-centre','industrial-logistics','Distribution centre','Distribution, fulfilment or major logistics facility','logistics.warehouse'],
   ['logistics.logistics-park','industrial-logistics','Logistics park','Multi-unit logistics or distribution campus',null],
+  ['logistics.storage-yard','industrial-logistics','Storage / marshalling yard','Substantial commercial open-storage, marshalling or logistics yard',null],
   ['logistics.self-storage','industrial-logistics','Self-storage','Purpose-built self-storage facility',null],
   ['logistics.cold-storage','industrial-logistics','Cold storage','Cold-chain, refrigerated or temperature-controlled storage',null],
   ['industrial.manufacturing','industrial-logistics','Manufacturing','Factory or manufacturing facility',null],
   ['industrial.food-processing','industrial-logistics','Food processing','Food or beverage production and processing facility',null],
   ['industrial.pharma-life-sciences','industrial-logistics','Pharma / life sciences','Pharmaceutical, biotech or life-sciences facility',null],
+  ['automotive.dealership','automotive','Vehicle dealership','Car, van or other vehicle dealership premises',null],
+  ['automotive.car-rental','automotive','Car rental','Vehicle rental premises or depot',null],
+  ['automotive.car-wash','automotive','Car wash / valeting','Commercial automated or staffed vehicle wash/valeting facility',null],
+  ['automotive.service-repair','automotive','Vehicle service / repair','Commercial motor servicing, repair or testing garage',null],
   ['digital.data-centre','digital-infrastructure','Data centre','Data centre or data-storage campus',null],
   ['digital.telecoms','digital-infrastructure','Telecoms','Telecommunications mast, tower or significant network facility',null],
   ['energy.solar','energy','Solar energy','Solar farm or substantial ground-mounted solar development',null],
@@ -85,7 +92,8 @@ const TAXONOMY = [
   ['community.childcare','community-services','Childcare / creche','Creche, nursery or childcare facility',null],
   ['community.school','community-services','School','Primary, secondary or special-school development',null],
   ['community.training-centre','community-services','Training centre','Vocational, apprenticeship or specialist training centre that is not a school',null],
-  ['community.healthcare','community-services','Healthcare','Hospital, clinic, medical centre or substantial healthcare facility',null],
+  ['community.healthcare','community-services','Healthcare','Hospital, clinic or medical centre',null],
+  ['community.veterinary','community-services','Veterinary','Veterinary clinic, hospital or animal-health premises',null],
   ['property.office','property-workplace','Office','Substantial office development, redevelopment or expansion',null],
   ['property.business-park','property-workplace','Business park','Business park or multi-building commercial campus',null],
   ['property.mixed-use','property-workplace','Mixed-use','Material mixed-use development spanning multiple commercial or residential uses',null],
@@ -319,11 +327,15 @@ Rules:
 - Rooftop solar ancillary to another development is not a solar-energy opportunity.
 - Existing uses stated to remain unchanged should not be tagged as proposed opportunities.
 - Extension-of-duration applications are procedural. Preserve the underlying substantive leaf category but set opportunity_type=procedural.
+- Retention is not automatically procedural: if retention establishes or materially changes a genuine commercial use, use redevelopment or existing_site_expansion as appropriate.
 - If the proposal is too incomplete to know what is being built, use insufficient_evidence and low confidence.
 - Genuine mixed-use schemes may have multiple independent material categories.
 - Where a taxonomy entry has parent=..., output the most specific supported category only. Parent watches will match descendants later.
 - An explicit substantial substation/HV compound can be energy.grid-substation. A substantial dedicated grid cable/export connection can be energy.grid-connection.
 - A business/logistics park can carry business-park/logistics-park/warehouse together when each is materially supported.
+- Commercial open storage or marshalling yards can be logistics.storage-yard.
+- Vehicle rental, car wash/valeting, dealerships and motor servicing/repair should use the specific automotive categories.
+- Veterinary premises use community.veterinary rather than generic healthcare.
 - A dedicated telecom mast/tower can be digital.telecoms even within a larger campus.
 - Operators must be clearly supported by the source.
 - Copy scale figures only when explicit.
