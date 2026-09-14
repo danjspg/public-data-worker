@@ -118,6 +118,10 @@ const taxonomyByKey = new Map(TAXONOMY.map((row) => [row.category_key,row]));
 const categoryKeys = TAXONOMY.map((row) => row.category_key);
 const groupKeys = [...new Set(TAXONOMY.map((row) => row.group_key))].sort();
 
+let cumulativeInputTokens=0;
+let cumulativeOutputTokens=0;
+let cumulativeTotalTokens=0;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clean = (value) => String(value ?? '').trim().replace(/\s+/g,' ');
 const esc = (value) => String(value ?? '').replaceAll("'","''");
@@ -403,6 +407,10 @@ ${taxonomyText}`;
         throw error;
       }
       const json=await response.json();
+      const usage=json.usage || {};
+      cumulativeInputTokens+=Number(usage.input_tokens || 0);
+      cumulativeOutputTokens+=Number(usage.output_tokens || 0);
+      cumulativeTotalTokens+=Number(usage.total_tokens || 0);
       const text=responseText(json);
       if (!text) throw new Error('OpenAI returned no output text');
       const parsed=JSON.parse(text);
@@ -489,13 +497,13 @@ async function main() {
       const classifications=await classifyBatch(batch);
       await storeResults(client,batch,classifications);
       completed+=batch.length;
-      console.log(JSON.stringify({shard:SHARD,completed,total:fetched.rows.length}));
+      console.log(JSON.stringify({shard:SHARD,completed,total:fetched.rows.length,input_tokens:cumulativeInputTokens,output_tokens:cumulativeOutputTokens,total_tokens:cumulativeTotalTokens}));
     }
   } finally {
     await client.end().catch(()=>{});
   }
 
-  console.log(JSON.stringify({ok:true,shard:SHARD,completed,missing_source:fetched.missing,source_warnings:fetched.sourceWarnings}));
+  console.log(JSON.stringify({ok:true,shard:SHARD,completed,missing_source:fetched.missing,source_warnings:fetched.sourceWarnings,input_tokens:cumulativeInputTokens,output_tokens:cumulativeOutputTokens,total_tokens:cumulativeTotalTokens}));
 }
 
 await main();
