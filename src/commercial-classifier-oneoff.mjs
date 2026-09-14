@@ -11,6 +11,7 @@ const SHARD_COUNT = 12;
 const MANIFEST_PATH = process.env.COMMERCIAL_CLASSIFIER_MANIFEST || 'data/commercial-classifier-active-manifest.json';
 const MODE = String(process.env.COMMERCIAL_CLASSIFIER_MODE || 'dry-run');
 const BATCH_SIZE = Math.max(1, Math.min(8, Number(process.env.COMMERCIAL_CLASSIFIER_BATCH_SIZE || 8)));
+const FORCE_RECLASSIFY = process.env.COMMERCIAL_CLASSIFIER_FORCE_RECLASSIFY === '1';
 const MODEL = 'gpt-5.6-terra';
 const TAXONOMY_VERSION = 'commercial-v1.2';
 const CLASSIFIER_SOURCE = 'public-worker-commercial-v1.2';
@@ -168,54 +169,56 @@ async function fetchArcgisRows(targets) {
   const byKey = new Map();
   const national = targets.filter((t) => !AGILE.has(t.local_authority_code));
   const groups = Map.groupBy(national,(t)=>t.local_authority_code);
+
   for (const [authority,items] of groups) {
     const sourceName = SOURCE_NAMES[authority];
     if (!sourceName) continue;
+
+    // Fast path: source OBJECTID when still current.
     for (const batch of chunk(items,75)) {
       const ids = batch.map((t)=>Number(t.source_application_id)).filter(Number.isInteger);
-      if (!ids.length) continue;
-      const where = `PlanningAuthority='${esc(sourceName)}' AND OBJECTID IN (${ids.join(',')})`;
-      const params = new URLSearchParams({
-        where,
-        outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
-        returnGeometry:'false',
-        resultRecordCount:String(Math.max(200,ids.length*2)),
-        f:'json'
-      });
-      const json = await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
-      for (const feature of json.features || []) {
-        const row = feature.attributes || {};
-        byKey.set(`${authority}||${clean(row.ApplicationNumber).toUpperCase()}`,row);
+      if (ids.length) {
+        const where = `PlanningAuthority='${esc(sourceName)}' AND OBJECTID IN (${ids.join(',')})`;
+        const params = new URLSearchParams({
+          where,
+          outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
+          returnGeometry:'false',
+          resultRecordCount:String(Math.max(200,ids.length*2)),
+          f:'json'
+        });
+        const json = await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
+        for (const feature of json.features || []) {
+          const row = feature.attributes || {};
+          byKey.set(`${authority}||${clean(row.ApplicationNumber).toUpperCase()}`,row);
+        }
       }
     }
-  }
 
-  const unresolved=national.filter((target)=>
-    !byKey.has(`${target.local_authority_code}||${clean(target.reference).toUpperCase()}`)
-  );
-  const fallbackGroups=Map.groupBy(unresolved,(target)=>target.local_authority_code);
-  for(const [authority,items] of fallbackGroups){
-    const sourceName=SOURCE_NAMES[authority];
-    if(!sourceName) continue;
-    for(const batch of chunk(items,35)){
-      const refs=batch.map((target)=>clean(target.reference)).filter(Boolean);
-      if(!refs.length) continue;
-      const where=`PlanningAuthority='${esc(sourceName)}' AND (${refs.map((ref)=>`ApplicationNumber='${esc(ref)}'`).join(' OR ')})`;
+    // Durable fallback: OBJECTIDs can drift between source refreshes, but planning
+    // authority + application reference is the public canonical identity.
+    const unresolved = items.filter((item)=>
+      !byKey.has(`${authority}||${clean(item.reference).toUpperCase()}`)
+    );
+    for (const batch of chunk(unresolved,30)) {
+      if (!batch.length) continue;
+      const referenceClause=batch
+        .map((item)=>`ApplicationNumber='${esc(item.reference)}'`)
+        .join(' OR ');
+      const where=`PlanningAuthority='${esc(sourceName)}' AND (${referenceClause})`;
       const params=new URLSearchParams({
         where,
         outFields:'OBJECTID,PlanningAuthority,ApplicationNumber,DevelopmentDescription,DevelopmentAddress,ApplicationStatus,ApplicationType,ApplicantForename,ApplicantSurname,ReceivedDate',
         returnGeometry:'false',
-        resultRecordCount:String(Math.max(100,refs.length*2)),
+        resultRecordCount:String(Math.max(100,batch.length*3)),
         f:'json'
       });
       const json=await fetchJson(`${ARC_QUERY}?${params}`,{headers:{'User-Agent':'OpenList public commercial classifier'}});
-      for(const feature of json.features || []){
+      for (const feature of json.features || []) {
         const row=feature.attributes || {};
         byKey.set(`${authority}||${clean(row.ApplicationNumber).toUpperCase()}`,row);
       }
     }
   }
-
   return byKey;
 }
 
@@ -484,26 +487,42 @@ async function main() {
 
   console.log(JSON.stringify({mode:MODE,shard:SHARD,shard_count:SHARD_COUNT,manifest_rows:allTargets.length,targets:targets.length,model:MODEL,taxonomy:TAXONOMY_VERSION}));
 
-  const fetched=await sourceRows(targets);
-  console.log(JSON.stringify({shard:SHARD,source_rows:fetched.rows.length,missing_source:fetched.missing,source_warnings:fetched.sourceWarnings}));
-
-  if (MODE!=='classify') return;
-
   const client=new Client({connectionString:WORKER_DATABASE_URL,ssl:{rejectUnauthorized:false}});
   await client.connect();
-  let completed=0;
   try {
+    if (!FORCE_RECLASSIFY && targets.length) {
+      const workKeys=targets.map((target)=>`${target.local_authority_code}:${target.reference}`);
+      const {rows:doneRows}=await client.query(`
+        select work_key
+        from work_items
+        where job_type='commercial_classifier_active'
+          and status='completed'
+          and result->>'taxonomy_version'=$1
+          and result->>'classifier_source'=$2
+          and work_key = any($3::text[])
+      `,[TAXONOMY_VERSION,CLASSIFIER_SOURCE,workKeys]);
+      const done=new Set(doneRows.map((row)=>row.work_key));
+      const before=targets.length;
+      targets=targets.filter((target)=>!done.has(`${target.local_authority_code}:${target.reference}`));
+      console.log(JSON.stringify({phase:'resume_filter',before,already_completed:before-targets.length,remaining:targets.length}));
+    }
+
+    const fetched=await sourceRows(targets);
+  console.log(JSON.stringify({shard:SHARD,source_rows:fetched.rows.length,missing_source:fetched.missing,source_warnings:fetched.sourceWarnings}));
+
+    if (MODE!=='classify') return;
+
+    let completed=0;
     for (const batch of chunk(fetched.rows,BATCH_SIZE)) {
       const classifications=await classifyBatch(batch);
       await storeResults(client,batch,classifications);
       completed+=batch.length;
       console.log(JSON.stringify({shard:SHARD,completed,total:fetched.rows.length,input_tokens:cumulativeInputTokens,output_tokens:cumulativeOutputTokens,total_tokens:cumulativeTotalTokens}));
     }
+    console.log(JSON.stringify({ok:true,shard:SHARD,completed,missing_source:fetched.missing,source_warnings:fetched.sourceWarnings,input_tokens:cumulativeInputTokens,output_tokens:cumulativeOutputTokens,total_tokens:cumulativeTotalTokens}));
   } finally {
     await client.end().catch(()=>{});
   }
-
-  console.log(JSON.stringify({ok:true,shard:SHARD,completed,missing_source:fetched.missing,source_warnings:fetched.sourceWarnings,input_tokens:cumulativeInputTokens,output_tokens:cumulativeOutputTokens,total_tokens:cumulativeTotalTokens}));
 }
 
 await main();
