@@ -1,0 +1,58 @@
+name: "[PUBLIC] One-off active commercial classifier"
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run fetches sources only; classify calls OpenAI and stages results"
+        required: true
+        default: "dry-run"
+        type: choice
+        options:
+          - dry-run
+          - classify
+      limit_per_shard:
+        description: "0 = all targets in each shard; use a small number for a canary"
+        required: true
+        default: "0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-commercial-classifier-oneoff
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm install --no-audit --no-fund
+
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+
+      - name: Run commercial classifier shard
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          COMMERCIAL_CLASSIFIER_MODE: ${{ inputs.mode }}
+          COMMERCIAL_CLASSIFIER_LIMIT: ${{ inputs.limit_per_shard }}
+          COMMERCIAL_CLASSIFIER_SHARD: ${{ matrix.shard }}
+          COMMERCIAL_CLASSIFIER_BATCH_SIZE: "8"
+        run: node src/commercial-classifier-oneoff.mjs
