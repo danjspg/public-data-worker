@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: dedupe-active-apply-backlog
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   dedupe:
