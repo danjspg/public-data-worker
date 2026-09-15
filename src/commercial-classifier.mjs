@@ -447,6 +447,7 @@ async function queueSourceSnapshots(client, rows) {
     };
     const {captured_at:_capturedAt,...hashableSnapshot}=snapshot;
     const contentHash=snapshotHash(hashableSnapshot);
+    row.source_content_hash=contentHash;
     const applicationKey=String(row.application_id || `${row.local_authority_code}:${row.reference}`);
     const workKey=`${applicationKey}:${contentHash.slice(0,20)}`;
     const input={
@@ -766,6 +767,54 @@ async function persistHydratedAgent(client, source) {
   return rowCount>0;
 }
 
+async function queueModelArtifact(client, source, result) {
+  const stableResult={...result};
+  delete stableResult.classified_at;
+  const artifact={
+    artifact_version:'commercial-model-artifact-v1',
+    application_id:source.application_id || null,
+    reference:source.reference,
+    local_authority_code:source.local_authority_code,
+    registration_date:source.registration_date || null,
+    source_content_hash:source.source_content_hash || null,
+    taxonomy_version:result.taxonomy_version,
+    semantic_version:result.semantic_version || null,
+    classifier_source:result.classifier_source,
+    model:result.model,
+    classified_at:result.classified_at,
+    result
+  };
+  const runHash=snapshotHash({
+    application_id:artifact.application_id,
+    source_content_hash:artifact.source_content_hash,
+    taxonomy_version:artifact.taxonomy_version,
+    semantic_version:artifact.semantic_version,
+    classifier_source:artifact.classifier_source,
+    model:artifact.model,
+    result:stableResult
+  });
+  const applicationKey=String(source.application_id || `${source.local_authority_code}:${source.reference}`);
+  const workKey=`${applicationKey}:${runHash.slice(0,24)}`;
+  const input={
+    application_id:source.application_id || null,
+    reference:source.reference,
+    local_authority_code:source.local_authority_code,
+    registration_date:source.registration_date || null,
+    source_content_hash:artifact.source_content_hash,
+    taxonomy_version:artifact.taxonomy_version,
+    semantic_version:artifact.semantic_version,
+    classifier_source:artifact.classifier_source,
+    model:artifact.model,
+    run_hash:runHash,
+    artifact_version:artifact.artifact_version
+  };
+  await client.query(`
+    insert into work_items(job_type,work_key,input,result,status,attempts,available_at,completed_at,updated_at)
+    values('commercial_model_artifact_archive',$1,$2::jsonb,$3::jsonb,'completed',0,now(),now(),now())
+    on conflict(job_type,work_key) do nothing
+  `,[workKey,JSON.stringify(input),JSON.stringify({run_hash:runHash,artifact})]);
+}
+
 async function storeResults(client, sourceRows, classifications) {
   const sourceById=new Map(sourceRows.map((row)=>[row.application_id,row]));
   for (const item of classifications) {
@@ -791,6 +840,7 @@ async function storeResults(client, sourceRows, classifications) {
       suppression_reason:item.suppression_reason||null,
       classified_at:new Date().toISOString()
     };
+    await queueModelArtifact(client,source,result);
     const input={
       application_id:item.application_id,
       local_authority_code:source.local_authority_code,
