@@ -144,6 +144,7 @@ async function stageCases(client, cases, refs) {
       select 'acp_current_case',work_key,input,result,'completed',now(),
              case when change_detected then null else now() end,now()
       from incoming
+      where true
       on conflict(job_type,work_key) do update
       set input=excluded.input,
           result=excluded.result,
