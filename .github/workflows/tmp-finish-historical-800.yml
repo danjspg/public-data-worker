@@ -1,0 +1,33 @@
+name: "[PUBLIC] Finish historical 800 tonight"
+
+on:
+  push:
+    paths:
+      - ".github/finish-historical-800-trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finish-historical-800-tonight
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Finish remaining historical notable classifications
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COMMERCIAL_CLASSIFIER_LIMIT: "61"
+          COMMERCIAL_CLASSIFIER_BATCH_SIZE: "8"
+          COMMERCIAL_CLASSIFIER_MAX_ATTEMPTS: "4"
+          COMMERCIAL_CLASSIFIER_QUEUE_SOURCE_PREFIX: "historical-notable-"
+        run: npm run work:commercial-classifier
