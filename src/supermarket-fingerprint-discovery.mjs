@@ -1,4 +1,5 @@
 // Discover likely supermarket/foodstore planning records from the worker corpus and queue them for targeted commercial classification.
+// GitHub write access verified after connector reconnect.
 import pg from 'pg';
 const { Client } = pg;
 const WORKER_DATABASE_URL = process.env.WORKER_DATABASE_URL;
