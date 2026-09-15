@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { reserveLlmTokens, settleLlmTokens, releaseLlmReservation, readLlmBudget } from './llm-budget.mjs';
 
 const { Client } = pg;
 
@@ -745,7 +746,33 @@ async function main() {
     }
 
     const itemByApplicationId=new Map(items.map((item)=>[item.input.application_id,item]));
+    const claimedIds=items.map((item)=>item.id);
+    let budgetExhausted=false;
     for (const batch of chunk(fetched.rows,BATCH_SIZE)) {
+      const reservation=await reserveLlmTokens(client,{
+        estimatedTokens:batch.length*1500,
+        workload:'commercial-classifier'
+      });
+      if(!reservation.ok) {
+        budgetExhausted=true;
+        await client.query(`
+          update work_items
+          set status='pending',
+              leased_at=null,
+              attempts=greatest(attempts-1,0),
+              available_at=(
+                date_trunc('day',now() at time zone 'Europe/London')
+                + interval '1 day 5 minutes'
+              ) at time zone 'Europe/London',
+              last_error='daily_llm_budget_exhausted',
+              updated_at=now()
+          where id=any($1::bigint[]) and status='running'
+        `,[claimedIds]);
+        console.log(JSON.stringify({phase:'daily_budget_exhausted',budget:reservation}));
+        break;
+      }
+
+      const tokensBefore=cumulativeTotalTokens;
       try {
         const classifications=await classifyBatch(batch);
         await storeResults(client,batch,classifications);
@@ -768,6 +795,10 @@ async function main() {
           `,[item.id,terminal ? 'failed' : 'pending',message]);
           if (terminal) failed += 1; else retried += 1;
         }
+      } finally {
+        const actualTokens=Math.max(0,cumulativeTotalTokens-tokensBefore);
+        if(actualTokens>0) await settleLlmTokens(client,reservation,actualTokens);
+        else await releaseLlmReservation(client,reservation);
       }
       console.log(JSON.stringify({
         phase:'progress',
@@ -782,10 +813,13 @@ async function main() {
       }));
     }
 
+    const dailyBudget=await readLlmBudget(client);
     console.log(JSON.stringify({
       ok:true,
       selected,
       completed,
+      budget_exhausted:budgetExhausted,
+      daily_llm_budget:dailyBudget,
       missing_source:missingSource,
       source_warnings:fetched.sourceWarnings,
       retried,
