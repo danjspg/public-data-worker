@@ -628,7 +628,9 @@ async function main() {
         and status='pending'
         and applied_at is null
         and available_at <= now()
-      order by id
+      order by
+        case when input->>'queue_source'='production-supermarket-corpus-v1' then 0 else 1 end,
+        id
       limit $1
     `,[LIMIT]);
     selected=items.length;
