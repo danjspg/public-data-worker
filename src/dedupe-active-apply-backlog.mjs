@@ -15,19 +15,42 @@ const configs=[
 const report={};
 try{
   for(const config of configs){
+    const latestApplied=await client.query(`
+      select distinct on (input->>'application_id')
+             input->>'application_id' as application_key,
+             result,applied_at
+      from work_items
+      where job_type=$1
+        and applied_at is not null
+        and input ? 'application_id'
+        and result is not null
+      order by input->>'application_id',id desc
+    `,[config.jobType]);
+
+    let baselinesSeeded=0;
+    for(const row of latestApplied.rows){
+      const signature=config.signature(row.result);
+      if(!signature||!row.application_key)continue;
+      await client.query(`
+        insert into source_sync_state(
+          job_family,application_key,last_applied_signature,last_applied_at,last_checked_at,updated_at
+        )
+        values($1,$2,$3,$4,$4,now())
+        on conflict(job_family,application_key) do update
+        set last_applied_signature=excluded.last_applied_signature,
+            last_applied_at=greatest(source_sync_state.last_applied_at,excluded.last_applied_at),
+            last_checked_at=greatest(source_sync_state.last_checked_at,excluded.last_checked_at),
+            updated_at=now()
+      `,[config.jobType,row.application_key,signature,row.applied_at]);
+      baselinesSeeded++;
+    }
+
     const {rows}=await client.query(`
-      select i.id,i.input,i.result,prev.result as previous_result
+      select i.id,i.input,i.result,s.last_applied_signature
       from work_items i
-      left join lateral (
-        select p.result
-        from work_items p
-        where p.job_type=i.job_type
-          and p.applied_at is not null
-          and p.id<i.id
-          and p.input->>'application_id'=i.input->>'application_id'
-        order by p.id desc
-        limit 1
-      ) prev on true
+      left join source_sync_state s
+        on s.job_family=i.job_type
+       and s.application_key=i.input->>'application_id'
       where i.job_type=$1
         and i.status='completed'
         and i.applied_at is null
@@ -38,7 +61,7 @@ try{
     let consumed=0,changed=0,noBaseline=0,missing=0;
     for(const item of rows){
       const current=config.signature(item.result);
-      const previous=config.signature(item.previous_result);
+      const previous=item.last_applied_signature || null;
       if(!current){
         missing++;
         await client.query(`
@@ -60,7 +83,7 @@ try{
       `,[item.id,JSON.stringify({source_signature:current,change_detected:false,checked_at:new Date().toISOString(),dedupe_reason:'matches_last_successfully_applied_source'})]);
       consumed++;
     }
-    report[config.jobType]={selected:rows.length,consumed,changed,no_baseline:noBaseline,missing};
+    report[config.jobType]={baselines_seeded:baselinesSeeded,selected:rows.length,consumed,changed,no_baseline:noBaseline,missing};
   }
   console.log(JSON.stringify({ok:true,...report},null,2));
 }finally{await client.end().catch(()=>{})}
