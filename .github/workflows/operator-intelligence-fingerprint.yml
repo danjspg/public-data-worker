@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "22 */2 * * *"
   workflow_run:
-    workflows: ["[PUBLIC] Commercial classifier incremental"]
+    workflows: ["[PUBLIC] Commercial classifier incremental", "Supermarket commercial classifier drain"]
     types: [completed]
   workflow_dispatch:
     inputs:
