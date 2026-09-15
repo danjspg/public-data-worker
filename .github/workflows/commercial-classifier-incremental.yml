@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - "src/commercial-classifier.mjs"
+      - "src/llm-budget.mjs"
       - ".github/workflows/commercial-classifier-incremental.yml"
       - "package.json"
       - "package-lock.json"
