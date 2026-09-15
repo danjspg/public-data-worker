@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { appealSignature } from './meaningful-source-signature.mjs';
 
 const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
@@ -107,23 +108,57 @@ async function upsertJob(client, values) {
     [JSON.stringify(values.cursor || {}), values.startedAt || null, values.completedAt || null, values.status || null, values.error || null]);
 }
 async function stageCases(client, cases, refs) {
-  let staged = 0;
+  let staged = 0, changesStaged = 0, unchangedChecked = 0;
   for (let offset = 0; offset < cases.length; offset += 250) {
-    const batch = cases.slice(offset, offset + 250).map((attrs) => {
+    const sourceBatch = cases.slice(offset, offset + 250).map((attrs) => {
       const caseNumber = clean(attrs.ABPCASEID);
-      return { work_key:caseNumber, input:{ acp_case_number:caseNumber }, result:{ attributes:attrs, planning_authority_case_reference:refs.get(caseNumber) || null, source_url:canonicalCaseUrl(caseNumber,attrs.LINKABPWEB) } };
+      const baseResult={ attributes:attrs, planning_authority_case_reference:refs.get(caseNumber) || null, source_url:canonicalCaseUrl(caseNumber,attrs.LINKABPWEB) };
+      return { work_key:caseNumber, input:{ acp_case_number:caseNumber }, baseResult };
+    });
+    const keys=sourceBatch.map((row)=>row.work_key);
+    const previous=await client.query(`
+      select work_key,result,applied_at
+      from work_items
+      where job_type='acp_current_case' and work_key=any($1::text[])
+    `,[keys]);
+    const previousByKey=new Map(previous.rows.map((row)=>[row.work_key,row]));
+    const batch=sourceBatch.map((row)=>{
+      const prior=previousByKey.get(row.work_key);
+      const sourceSignature=appealSignature(row.baseResult);
+      const previousSignature=appealSignature(prior?.result);
+      const changeDetected=!prior?.applied_at || !sourceSignature || !previousSignature || sourceSignature!==previousSignature;
+      if(changeDetected) changesStaged += 1; else unchangedChecked += 1;
+      return {
+        work_key:row.work_key,
+        input:{...row.input,change_detected:changeDetected},
+        result:{...row.baseResult,source_signature:sourceSignature,change_detected:changeDetected,checked_at:new Date().toISOString()},
+        change_detected:changeDetected
+      };
     });
     const result = await client.query(`
-      with incoming as (select * from jsonb_to_recordset($1::jsonb) as x(work_key text,input jsonb,result jsonb))
-      insert into work_items(job_type,work_key,input,result,status,completed_at,updated_at)
-      select 'acp_current_case',work_key,input,result,'completed',now(),now() from incoming
-      on conflict(job_type,work_key) do update set input=excluded.input,result=excluded.result,status='completed',completed_at=now(),
-        applied_at=case when work_items.result is distinct from excluded.result then null else work_items.applied_at end,
-        last_error=null,updated_at=now()
+      with incoming as (
+        select * from jsonb_to_recordset($1::jsonb)
+          as x(work_key text,input jsonb,result jsonb,change_detected boolean)
+      )
+      insert into work_items(job_type,work_key,input,result,status,completed_at,applied_at,updated_at)
+      select 'acp_current_case',work_key,input,result,'completed',now(),
+             case when change_detected then null else now() end,now()
+      from incoming
+      on conflict(job_type,work_key) do update
+      set input=excluded.input,
+          result=excluded.result,
+          status='completed',
+          completed_at=now(),
+          applied_at=case when incoming.change_detected then null else coalesce(work_items.applied_at,now()) end,
+          last_error=null,
+          updated_at=now()
+      from incoming
+      where work_items.job_type='acp_current_case'
+        and work_items.work_key=incoming.work_key
     `, [JSON.stringify(batch)]);
     staged += result.rowCount || batch.length;
   }
-  return staged;
+  return { staged, changesStaged, unchangedChecked };
 }
 
 const client = new Client({ connectionString, ssl:{rejectUnauthorized:false} });
@@ -148,10 +183,11 @@ try {
     }
     if (index < candidates.length - 1 && ENRICH_DELAY_MS) await sleep(ENRICH_DELAY_MS);
   }
-  const staged = await stageCases(client,cases,refs);
-  const cursor = { source_record_count:sourceRecordCount, unique_cases:cases.length, enriched, enrichment_attempted:candidates.length, enrichment_failures:enrichmentFailures, source_last_edit_at: metadata.editingInfo?.lastEditDate ? new Date(metadata.editingInfo.lastEditDate).toISOString() : null };
+  const stageReport = await stageCases(client,cases,refs);
+  const staged=stageReport.staged;
+  const cursor = { source_record_count:sourceRecordCount, unique_cases:cases.length, enriched, enrichment_attempted:candidates.length, enrichment_failures:enrichmentFailures, source_last_edit_at: metadata.editingInfo?.lastEditDate ? new Date(metadata.editingInfo.lastEditDate).toISOString() : null, changes_staged:stageReport.changesStaged, unchanged_checked:stageReport.unchangedChecked };
   await upsertJob(client,{cursor,startedAt,completedAt:new Date().toISOString(),status:'complete',error:enrichmentFailures ? `${enrichmentFailures} detail lookups failed; core source snapshot staged` : null});
-  console.log(JSON.stringify({ ...cursor, staged },null,2));
+  console.log(JSON.stringify({ ...cursor, staged, changes_staged:stageReport.changesStaged, unchanged_checked:stageReport.unchangedChecked },null,2));
 } catch (error) {
   await upsertJob(client,{startedAt,completedAt:new Date().toISOString(),status:'failed',error:error instanceof Error ? error.message : String(error)}).catch(()=>{});
   throw error;
