@@ -1,6 +1,8 @@
 name: Operator intelligence fingerprint backfill
 
 on:
+  schedule:
+    - cron: "22 */2 * * *"
   workflow_dispatch:
     inputs:
       limit:
@@ -19,6 +21,7 @@ on:
     branches: [main]
     paths:
       - "src/operator-intelligence-fingerprint.mjs"
+      - ".github/workflows/operator-intelligence-fingerprint.yml"
 
 permissions:
   contents: read
