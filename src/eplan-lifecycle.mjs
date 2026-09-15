@@ -15,6 +15,17 @@ const AUTHORITIES = {
   SLIGO: 'SligoCC', TIPPERARY: 'TipperaryCC', WESTMEATH: 'WestmeathCC', WICKLOW: 'WicklowCC',
 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const APPLY_FIELDS = [
+  'further_information_requested_date','further_information_received_date','withdrawal_date',
+  'appeal_lodged_date','expiry_date'
+];
+function lifecycleDelta(input,result) {
+  const delta={};
+  for(const field of APPLY_FIELDS){
+    if(result?.[field] && !input?.[field]) delta[field]=result[field];
+  }
+  return delta;
+}
 const normaliseReference = (value) => String(value || '').trim().replace(/\s+/g, '').toUpperCase();
 function htmlText(value) {
   return String(value || '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')
@@ -117,7 +128,25 @@ try {
         `,[item.id,String(result.error || result.reason).slice(0,500)]);
         deferred += 1;
       } else {
-        await client.query(`update work_items set status='completed', result=$2::jsonb, completed_at=now(), last_error=null, updated_at=now() where id=$1`, [item.id, JSON.stringify(result)]);
+        const delta=result.ok ? lifecycleDelta(item.input,result) : {};
+        const changeDetected=Object.keys(delta).length>0;
+        const consumeInWorker=item.job_type==='eplan_active_lifecycle' && (!result.ok || !changeDetected);
+        const enrichedResult={
+          ...result,
+          change_detected:changeDetected,
+          delta,
+          checked_at:new Date().toISOString()
+        };
+        await client.query(`
+          update work_items
+          set status='completed',
+              result=$2::jsonb,
+              applied_at=case when $3 then now() else applied_at end,
+              completed_at=now(),
+              last_error=null,
+              updated_at=now()
+          where id=$1
+        `, [item.id, JSON.stringify(enrichedResult), consumeInWorker]);
         completed += 1;
       }
     } catch (error) {
