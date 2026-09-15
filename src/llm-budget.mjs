@@ -69,7 +69,7 @@ export async function settleLlmTokens(client, reservation, actualTokens) {
             jsonb_set(result,'{reserved_tokens}',
               to_jsonb(greatest(0,coalesce((result->>'reserved_tokens')::bigint,0)-$2::bigint)),true),
             '{actual_tokens}',
-              to_jsonb(coalesce((result->>'actual_tokens')::bigint,0)+$3::bigint,true),
+              to_jsonb(coalesce((result->>'actual_tokens')::bigint,0)+$3::bigint),true),
           '{calls}',
             to_jsonb(coalesce((result->>'calls')::bigint,0)+1),true),
         updated_at=now()
