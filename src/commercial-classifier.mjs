@@ -355,11 +355,11 @@ async function sourceRows(targets) {
   for (const target of targets) {
     const key = `${target.local_authority_code}||${clean(target.reference).toUpperCase()}`;
     const national = arcgis.get(key);
-    let proposal = clean(national?.DevelopmentDescription);
-    let location = clean(national?.DevelopmentAddress);
-    let applicationType = clean(national?.ApplicationType);
-    let applicantName = [national?.ApplicantForename,national?.ApplicantSurname].map(clean).filter(Boolean).join(' ');
-    let sourceKind = national ? 'arcgis' : null;
+    let proposal = clean(national?.DevelopmentDescription || target.proposal);
+    let location = clean(national?.DevelopmentAddress || target.location);
+    let applicationType = clean(national?.ApplicationType || target.application_type);
+    let applicantName = [national?.ApplicantForename,national?.ApplicantSurname].map(clean).filter(Boolean).join(' ') || clean(target.applicant_name);
+    let sourceKind = national ? 'arcgis' : (proposal ? 'worker-input' : null);
 
     const kildareRow=kildare.get(key);
     if (kildareRow) {
@@ -392,6 +392,7 @@ async function sourceRows(targets) {
     }
 
     rows.push({
+      ...target,
       application_id:target.application_id,
       reference:target.reference,
       local_authority_code:target.local_authority_code,
@@ -570,8 +571,18 @@ async function storeResults(client, sourceRows, classifications) {
       application_id:item.application_id,
       local_authority_code:source.local_authority_code,
       reference:source.reference,
+      source_application_id:source.source_application_id ?? null,
+      source_url:source.source_url ?? null,
+      source_api_url:source.source_api_url ?? null,
       normalized_status:source.normalized_status,
       registration_date:source.registration_date,
+      application_type:source.application_type ?? null,
+      proposal:source.proposal ?? null,
+      location:source.location ?? null,
+      applicant_name:source.applicant_name ?? null,
+      agent_name:source.agent_name ?? null,
+      queue_source:source.queue_source ?? null,
+      candidate_signals:source.candidate_signals ?? null,
       pipeline:'incremental'
     };
     const workKey=`${source.local_authority_code}:${source.reference}`;
