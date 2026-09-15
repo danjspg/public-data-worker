@@ -4,13 +4,6 @@ on:
   schedule:
     - cron: "7,37 * * * *"
   workflow_dispatch:
-  push:
-    paths:
-      - "src/commercial-classifier.mjs"
-      - "src/llm-budget.mjs"
-      - ".github/workflows/commercial-classifier-incremental.yml"
-      - "package.json"
-      - "package-lock.json"
 
 permissions:
   contents: read
@@ -24,12 +17,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Reserve new-day budget for 02:00 historical tranche
+        id: budget_window
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          now_epoch="$(TZ=Europe/London date +%s)"
+          cutoff_epoch="$(TZ=Europe/London date -d '2026-09-16 02:00:00' +%s)"
+          if [ "$now_epoch" -lt "$cutoff_epoch" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.budget_window.outputs.run == 'true'
       - uses: actions/setup-node@v7
+        if: steps.budget_window.outputs.run == 'true'
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - if: steps.budget_window.outputs.run == 'true'
+        run: npm install --no-audit --no-fund
       - name: Classify queued notable applications
+        if: steps.budget_window.outputs.run == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
