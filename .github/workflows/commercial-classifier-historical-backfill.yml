@@ -1,0 +1,42 @@
+name: Historical commercial classifier backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      queue_prefix:
+        description: "Queue source prefix to drain"
+        required: false
+        default: "historical-notable-"
+      limit_per_lane:
+        description: "Maximum records claimed per lane"
+        required: false
+        default: "300"
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        lane: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Drain historical commercial queue lane
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COMMERCIAL_CLASSIFIER_LIMIT: ${{ inputs.limit_per_lane || '300' }}
+          COMMERCIAL_CLASSIFIER_BATCH_SIZE: "8"
+          COMMERCIAL_CLASSIFIER_MAX_ATTEMPTS: "4"
+          COMMERCIAL_CLASSIFIER_QUEUE_SOURCE_PREFIX: ${{ inputs.queue_prefix || 'historical-notable-' }}
+          COMMERCIAL_CLASSIFIER_LANE: ${{ matrix.lane }}
+        run: npm run work:commercial-classifier
