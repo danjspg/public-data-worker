@@ -26,6 +26,15 @@ function htmlText(value) {
     .replace(/\s+/g,' ').trim();
 }
 function normalizeName(value) { return htmlText(value).normalize('NFKC').toLowerCase().replace(/[’‘`]/g,"'").replace(/\s+/g,' ').trim(); }
+function identityHints(rawName,payload={}) {
+  const email=htmlText(payload.email||'');
+  const emailDomain=email.includes('@') ? email.split('@').pop().toLowerCase().replace(/[^a-z0-9.-]/g,'') : null;
+  const careOfStripped=normalizeName(rawName).replace(/^c\s*\/\s*o\s+/,'').replace(/^care\s+of\s+/,'').trim();
+  return {
+    care_of_stripped_name:careOfStripped || null,
+    email_domain:emailDomain || null
+  };
+}
 function detailFields(html) {
   const fields = new Map();
   for (const row of String(html || '').matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
@@ -53,6 +62,7 @@ function parseEplanAgent(html) {
   if (!normalized) return [];
   const payload = {};
   for (const key of ['address','phone','telephone','email','fax']) if (fields.get(key)) payload[key] = fields.get(key);
+  payload.identity_hints=identityHints(clean,payload);
   return [{ role:'agent', raw_name:clean, raw_name_normalized:normalized, confidence:100, source_payload:payload }];
 }
 async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
@@ -72,7 +82,7 @@ async function fetchProfessional(authority, reference) {
       if (!row) return { ok:false, reason:'reference_not_found', source_family:'agile' };
       const raw = htmlText(row.agentName);
       const source_url = `https://planning.agileapplications.ie/${cfg.tenant}/search-applications/`;
-      return { ok:true, reason:raw ? null : 'no_agent', source_family:'agile', source_url, professionals:raw ? [{ role:'agent',raw_name:raw,raw_name_normalized:normalizeName(raw),confidence:100,source_payload:{source_application_id:row.id ?? null} }] : [] };
+      return { ok:true, reason:raw ? null : 'no_agent', source_family:'agile', source_url, professionals:raw ? [{ role:'agent',raw_name:raw,raw_name_normalized:normalizeName(raw),confidence:100,source_payload:{source_application_id:row.id ?? null,identity_hints:identityHints(raw,{})} }] : [] };
     } catch (error) { return { ok:false, reason:'fetch_error', error:String(error), source_family:'agile' }; }
   }
   const path = EPLAN_AUTHORITIES[authority];
