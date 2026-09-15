@@ -2,7 +2,7 @@ name: "[PUBLIC] Commercial classifier incremental"
 
 on:
   schedule:
-    - cron: "7,37 * * * *"
+    - cron: "37 * * * *"
   workflow_dispatch:
   push:
     paths:
@@ -32,7 +32,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          COMMERCIAL_CLASSIFIER_LIMIT: "500"
+          COMMERCIAL_CLASSIFIER_LIMIT: "40"
           COMMERCIAL_CLASSIFIER_BATCH_SIZE: "8"
           COMMERCIAL_CLASSIFIER_MAX_ATTEMPTS: "4"
         run: npm run work:commercial-classifier
