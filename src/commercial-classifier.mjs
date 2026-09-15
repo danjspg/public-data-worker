@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { createHash } from 'node:crypto';
 import { reserveLlmTokens, settleLlmTokens, releaseLlmReservation, readLlmBudget } from './llm-budget.mjs';
 
 const { Client } = pg;
@@ -12,6 +13,8 @@ const MODEL = 'gpt-5.6-terra';
 const QUEUE_SOURCE_PREFIX = String(process.env.COMMERCIAL_CLASSIFIER_QUEUE_SOURCE_PREFIX || '').trim();
 const TAXONOMY_VERSION = 'commercial-v1.2';
 const CLASSIFIER_SOURCE = 'public-worker-commercial-v1.2';
+const SEMANTIC_VERSION = 'commercial-semantic-v1';
+const SOURCE_SNAPSHOT_VERSION = 'commercial-source-snapshot-v1';
 
 if (!WORKER_DATABASE_URL) throw new Error('WORKER_DATABASE_URL is required');
 if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required');
@@ -352,6 +355,122 @@ async function fetchAgileRow(target) {
   };
 }
 
+
+function snapshotValue(value, depth=0) {
+  if (value == null || depth > 3) return null;
+  if (typeof value === 'string') return clean(value).slice(0,12000) || null;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0,50).map(v=>snapshotValue(v,depth+1)).filter(v=>v!=null);
+  if (typeof value === 'object') {
+    const out={};
+    for (const [key,val] of Object.entries(value)) {
+      if (!/^(id|name|description|code|value|label|reference|date|status|type|url|href|documentType|title)$/i.test(key)) continue;
+      const cleaned=snapshotValue(val,depth+1);
+      if (cleaned!=null) out[key]=cleaned;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+  return null;
+}
+
+function sourceSubset(source, sourceKind) {
+  if (!source || typeof source!=='object') return {};
+  const keys=[
+    'id','applicationId','OBJECTID','sourceApplicationId',
+    'reference','webReference','ApplicationNumber','FileNumber','PlanningAuthority',
+    'fullProposal','proposal','description','developmentDescription','DevelopmentDescription',
+    'siteAddress','developmentAddress','DevelopmentAddress','location',
+    'applicationType','ApplicationType','type','Type',
+    'applicantName','applicantSurname','ApplicantName','ApplicantForename','ApplicantSurname',
+    'agentName','AgentName','Agent',
+    'status','applicationStatus','ApplicationStatus',
+    'decision','decisionText','decisionDate','decisionDueDate','finalDecision',
+    'registrationDate','receivedDate','ReceivedDate','lodgedDate',
+    'easting','northing','eastings','northings','x','y','latitude','longitude','lat','lng',
+    'parentReference','parentApplication','previousReference','previousApplication',
+    'linkedApplications','linkedApplicationReferences',
+    'documents','attachments','files'
+  ];
+  const out={source_kind:sourceKind};
+  for(const key of keys){
+    if(!(key in source)) continue;
+    const value=snapshotValue(source[key]);
+    if(value!=null && value!=='') out[key]=value;
+  }
+  return out;
+}
+
+function firstSourceText(sources, keys) {
+  for(const source of sources){
+    if(!source || typeof source!=='object') continue;
+    for(const key of keys){
+      const raw=source[key];
+      const value=typeof raw==='object' && raw!==null ? (raw.description ?? raw.name ?? raw.value ?? raw.label ?? '') : raw;
+      const text=clean(value);
+      if(text) return text;
+    }
+  }
+  return null;
+}
+
+function snapshotHash(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+async function queueSourceSnapshots(client, rows) {
+  let queued=0;
+  for(const row of rows){
+    const snapshot={
+      snapshot_version:SOURCE_SNAPSHOT_VERSION,
+      captured_at:new Date().toISOString(),
+      application_id:row.application_id || null,
+      reference:row.reference,
+      local_authority_code:row.local_authority_code,
+      source_kind:row.source_kind || 'target-only',
+      source_url:row.source_url || null,
+      source_api_url:row.source_api_url || null,
+      canonical:{
+        proposal:row.proposal || null,
+        location:row.location || null,
+        application_type:row.application_type || null,
+        applicant_name:row.applicant_name || null,
+        agent_name:row.agent_name || null,
+        normalized_status:row.normalized_status || null,
+        source_status:row.source_status || null,
+        decision_text:row.decision_text || null,
+        decision_date:row.decision_date || null,
+        decision_due_date:row.decision_due_date || null,
+        registration_date:row.registration_date || null,
+        registration_date_source:row.registration_date_source || null
+      },
+      authoritative:row.source_snapshot || {}
+    };
+    const contentHash=snapshotHash(snapshot);
+    const applicationKey=String(row.application_id || `${row.local_authority_code}:${row.reference}`);
+    const workKey=`${applicationKey}:${contentHash.slice(0,20)}`;
+    const input={
+      application_id:row.application_id || null,
+      reference:row.reference,
+      local_authority_code:row.local_authority_code,
+      registration_date:row.registration_date || null,
+      source_kind:row.source_kind || 'target-only',
+      source_url:row.source_url || null,
+      source_api_url:row.source_api_url || null,
+      content_hash:contentHash,
+      snapshot_version:SOURCE_SNAPSHOT_VERSION
+    };
+    const result={content_hash:contentHash,snapshot};
+    const inserted=await client.query(`
+      insert into work_items(job_type,work_key,input,result,status,attempts,available_at,completed_at,updated_at)
+      values('commercial_source_snapshot_archive',$1,$2::jsonb,$3::jsonb,'completed',0,now(),now(),now())
+      on conflict(job_type,work_key) do nothing
+      returning id
+    `,[workKey,JSON.stringify(input),JSON.stringify(result)]);
+    queued+=inserted.rowCount;
+  }
+  return queued;
+}
+
 async function sourceRows(targets) {
   const arcgis = await fetchArcgisRows(targets);
   const kildare = await fetchKildareRows(targets);
@@ -368,6 +487,7 @@ async function sourceRows(targets) {
     let applicantName = [national?.ApplicantForename,national?.ApplicantSurname].map(clean).filter(Boolean).join(' ') || clean(target.applicant_name);
     let agentName = clean(target.agent_name);
     let sourceKind = national ? 'arcgis' : (proposal ? 'worker-input' : null);
+    let authoritativeSource = national || null;
 
     const kildareRow=kildare.get(key);
     if (kildareRow) {
@@ -377,6 +497,7 @@ async function sourceRows(targets) {
       applicantName=clean(kildareRow.ApplicantName);
       agentName=clean(kildareRow.AgentName || kildareRow.Agent || kildareRow.agentName || agentName);
       sourceKind='kildare-register';
+      authoritativeSource=kildareRow;
     }
 
     if (AGILE_CONFIG[target.local_authority_code]) {
@@ -389,6 +510,7 @@ async function sourceRows(targets) {
           applicantName = clean(detail.applicantName || detail.applicantSurname || applicantName);
           agentName = clean(detail.agentName || detail.agent?.name || agentName);
           sourceKind = detail.fullProposal ? 'agile-detail' : 'agile-search';
+          authoritativeSource=detail;
         }
       } catch (error) {
         sourceWarnings += 1;
@@ -401,6 +523,12 @@ async function sourceRows(targets) {
       continue;
     }
 
+    const sourceStatus=firstSourceText([authoritativeSource,target],['applicationStatus','ApplicationStatus','status','normalizedStatus']);
+    const decisionText=firstSourceText([authoritativeSource,target],['finalDecision','decisionText','decision']);
+    const decisionDate=firstSourceText([authoritativeSource,target],['decisionDate','decidedDate','decision_date']);
+    const decisionDueDate=firstSourceText([authoritativeSource,target],['decisionDueDate','decision_due_date']);
+    const registrationDateSource=firstSourceText([authoritativeSource,target],['registrationDate','receivedDate','ReceivedDate','lodgedDate']);
+
     rows.push({
       ...target,
       application_id:target.application_id,
@@ -412,6 +540,12 @@ async function sourceRows(targets) {
       applicant_name:applicantName || null,
       agent_name:agentName || null,
       normalized_status:target.normalized_status,
+      source_status:sourceStatus,
+      decision_text:decisionText,
+      decision_date:decisionDate,
+      decision_due_date:decisionDueDate,
+      registration_date_source:registrationDateSource,
+      source_snapshot:sourceSubset(authoritativeSource,sourceKind || 'target-only'),
       registration_date:target.registration_date,
       source_kind:sourceKind || 'target-only'
     });
@@ -452,10 +586,22 @@ function buildSchema(applicationIds) {
             commercial_relevance:{type:'string',enum:['low','medium','high']},
             confidence:{type:'string',enum:['low','medium','high','very_high']},
             opportunity_type:{type:'string',enum:OPPORTUNITY_TYPES},
+            semantic:{
+              type:'object',
+              additionalProperties:false,
+              properties:{
+                development_action:{type:'string',enum:['new_build','extension','replacement','redevelopment','change_of_use','retention','extension_of_duration','alteration','infrastructure','mixed','unclear']},
+                site_context:{type:'array',maxItems:4,items:{type:'string',enum:['greenfield','brownfield','existing_operational_site','retail_park','shopping_centre','forecourt','industrial_estate','business_park','town_centre','residential_area','campus','transport_hub','other','unclear']}},
+                applicant_role:{type:'string',enum:['operator','developer','spv','landlord_property_owner','infrastructure_provider','public_body','individual','unknown']},
+                commercial_events:{type:'array',maxItems:4,items:{type:'string',enum:['market_entry','new_location','capacity_expansion','replacement_store_facility','relocation','estate_refresh','speculative_development','change_of_operator','decommissioning','procedural_only','unknown']}},
+                organizations:{type:'array',maxItems:10,items:{type:'object',additionalProperties:false,properties:{name:{type:'string',minLength:1,maxLength:160},role:{type:'string',enum:['operator','applicant','developer','landlord','agent','architect','planning_consultant','engineer','infrastructure_provider','other']}},required:['name','role']}}
+              },
+              required:['development_action','site_context','applicant_role','commercial_events','organizations']
+            },
             evidence:{type:'array',minItems:1,maxItems:4,items:{type:'string',minLength:3,maxLength:180}},
             suppression_reason:{type:['string','null'],maxLength:240}
           },
-          required:['application_id','sectors','commercial_categories','development_types','operators','scale','commercial_relevance','confidence','opportunity_type','evidence','suppression_reason']
+          required:['application_id','sectors','commercial_categories','development_types','operators','scale','commercial_relevance','confidence','opportunity_type','semantic','evidence','suppression_reason']
         }
       }
     },
@@ -498,6 +644,11 @@ Rules:
 - Veterinary premises use community.veterinary rather than generic healthcare.
 - A dedicated telecom mast/tower can be digital.telecoms even within a larger campus.
 - Operators must be clearly supported by the source.
+- semantic.development_action describes what is happening to the site/facility, not its sector.
+- semantic.site_context must only use context supported by the supplied record.
+- semantic.applicant_role may infer a broad role only when supported by the applicant name and proposal; otherwise use unknown.
+- semantic.commercial_events should be conservative. Do not claim market entry, relocation or change of operator unless the record supports it.
+- semantic.organizations should contain explicitly named organisations and their supported role. Do not turn private individuals into organisations. Agent may be copied when explicitly supplied.
 - Copy scale figures only when explicit.
 - Evidence must be short factual reasons and must not include personal names, home addresses, email addresses or phone numbers.
 Commercial relevance is descriptive only and does not control alert eligibility.
@@ -513,6 +664,9 @@ ${taxonomyText}`;
     proposal:r.proposal,
     location:r.location,
     applicant_name:r.applicant_name,
+    agent_name:r.agent_name,
+    source_status:r.source_status,
+    decision_text:r.decision_text,
     normalized_status:r.normalized_status
   }));
 
@@ -629,6 +783,8 @@ async function storeResults(client, sourceRows, classifications) {
       commercial_relevance:item.commercial_relevance,
       confidence:item.confidence,
       opportunity_type:item.opportunity_type,
+      semantic_version:SEMANTIC_VERSION,
+      semantic:item.semantic,
       default_alert_eligible:defaultAlertEligible({...item,commercial_categories:categories}),
       evidence:item.evidence||[],
       suppression_reason:item.suppression_reason||null,
@@ -726,6 +882,7 @@ async function main() {
 
     const targets=items.map((item)=>item.input);
     const fetched=await sourceRows(targets);
+    const sourceSnapshotsQueued=await queueSourceSnapshots(client,fetched.rows);
     const fetchedIds=new Set(fetched.rows.map((row)=>row.application_id));
 
     for (const item of items) {
@@ -822,6 +979,7 @@ async function main() {
       daily_llm_budget:dailyBudget,
       missing_source:missingSource,
       source_warnings:fetched.sourceWarnings,
+      source_snapshots_queued:sourceSnapshotsQueued,
       retried,
       failed,
       model:MODEL,
