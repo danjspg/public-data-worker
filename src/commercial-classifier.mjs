@@ -8,6 +8,7 @@ const LIMIT = Math.max(1, Math.min(500, Number(process.env.COMMERCIAL_CLASSIFIER
 const BATCH_SIZE = Math.max(1, Math.min(8, Number(process.env.COMMERCIAL_CLASSIFIER_BATCH_SIZE || 8)));
 const MAX_ATTEMPTS = Math.max(1, Math.min(8, Number(process.env.COMMERCIAL_CLASSIFIER_MAX_ATTEMPTS || 4)));
 const MODEL = 'gpt-5.6-terra';
+const QUEUE_SOURCE_PREFIX = String(process.env.COMMERCIAL_CLASSIFIER_QUEUE_SOURCE_PREFIX || '').trim();
 const TAXONOMY_VERSION = 'commercial-v1.2';
 const CLASSIFIER_SOURCE = 'public-worker-commercial-v1.2';
 
@@ -629,6 +630,7 @@ async function main() {
           and status='pending'
           and applied_at is null
           and available_at <= now()
+          and ($2='' or input->>'queue_source' like $2 || '%')
         order by
           case
             when input->>'queue_source'='production-supermarket-corpus-v1' then 0
@@ -648,7 +650,7 @@ async function main() {
       from picked
       where w.id=picked.id
       returning w.id,w.work_key,w.input,picked.attempts as attempts
-    `,[LIMIT]);
+    `,[LIMIT,QUEUE_SOURCE_PREFIX]);
     selected=items.length;
 
     if (!items.length) {
