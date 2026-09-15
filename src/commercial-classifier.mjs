@@ -445,7 +445,8 @@ async function queueSourceSnapshots(client, rows) {
       },
       authoritative:row.source_snapshot || {}
     };
-    const contentHash=snapshotHash(snapshot);
+    const {captured_at:_capturedAt,...hashableSnapshot}=snapshot;
+    const contentHash=snapshotHash(hashableSnapshot);
     const applicationKey=String(row.application_id || `${row.local_authority_code}:${row.reference}`);
     const workKey=`${applicationKey}:${contentHash.slice(0,20)}`;
     const input={
