@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/active-planning-agile.yml"
       - "src/active-planning-agile.mjs"
+      - "src/meaningful-source-signature.mjs"
       - "package.json"
   workflow_dispatch:
 
