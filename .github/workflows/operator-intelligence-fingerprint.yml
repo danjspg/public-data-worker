@@ -15,6 +15,10 @@ on:
         description: "Call the model but do not persist fingerprints"
         type: boolean
         default: false
+  push:
+    branches: [main]
+    paths:
+      - "src/operator-intelligence-fingerprint.mjs"
 
 permissions:
   contents: read
