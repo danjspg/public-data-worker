@@ -149,12 +149,12 @@ async function stageCases(client, cases, refs) {
           result=excluded.result,
           status='completed',
           completed_at=now(),
-          applied_at=case when incoming.change_detected then null else coalesce(work_items.applied_at,now()) end,
+          applied_at=case
+            when coalesce((excluded.input->>'change_detected')::boolean,true) then null
+            else coalesce(work_items.applied_at,now())
+          end,
           last_error=null,
           updated_at=now()
-      from incoming
-      where work_items.job_type='acp_current_case'
-        and work_items.work_key=incoming.work_key
     `, [JSON.stringify(batch)]);
     staged += result.rowCount || batch.length;
   }
