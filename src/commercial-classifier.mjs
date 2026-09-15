@@ -630,7 +630,12 @@ async function main() {
           and applied_at is null
           and available_at <= now()
         order by
-          case when input->>'queue_source'='production-supermarket-corpus-v1' then 0 else 1 end,
+          case
+            when input->>'queue_source'='production-supermarket-corpus-v1' then 0
+            when input->>'queue_source' like 'historical-notable-%' then 1
+            when input->>'queue_source'='active-notable' then 2
+            else 10
+          end,
           id
         for update skip locked
         limit $1
