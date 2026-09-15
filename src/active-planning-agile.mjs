@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { activeAgileSignature } from './meaningful-source-signature.mjs';
 
 const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
@@ -55,13 +56,24 @@ await client.connect();
 let selected = 0, completed = 0, missing = 0, deferred = 0;
 try {
   const { rows } = await client.query(`
-    select id,input
-    from work_items
-    where job_type='active_planning_agile_detail'
-      and status='pending'
-      and applied_at is null
-      and available_at <= now()
-    order by id
+    select i.id,i.input,
+           prev.result as previous_result
+    from work_items i
+    left join lateral (
+      select p.result
+      from work_items p
+      where p.job_type='active_planning_agile_detail'
+        and p.applied_at is not null
+        and p.id < i.id
+        and p.input->>'application_id'=i.input->>'application_id'
+      order by p.id desc
+      limit 1
+    ) prev on true
+    where i.job_type='active_planning_agile_detail'
+      and i.status='pending'
+      and i.applied_at is null
+      and i.available_at <= now()
+    order by i.id
     limit $1
   `, [LIMIT]);
   selected = rows.length;
@@ -75,11 +87,27 @@ try {
     }
     try {
       const result = await fetchDetail(item.input, config);
+      const baseResult={ ok:true, ...result };
+      const sourceSignature=activeAgileSignature(baseResult);
+      const previousSignature=activeAgileSignature(item.previous_result);
+      const unchanged=Boolean(sourceSignature && previousSignature && sourceSignature===previousSignature);
+      const nothingToApply=!result.found || unchanged;
       await client.query(`
         update work_items
-        set status='completed', result=$2::jsonb, completed_at=now(), last_error=null, attempts=attempts+1, updated_at=now()
+        set status='completed',
+            result=$2::jsonb,
+            applied_at=case when $3 then now() else null end,
+            completed_at=now(),
+            last_error=null,
+            attempts=attempts+1,
+            updated_at=now()
         where id=$1
-      `, [item.id, JSON.stringify({ ok: true, ...result })]);
+      `, [item.id, JSON.stringify({
+        ...baseResult,
+        source_signature:sourceSignature,
+        change_detected:result.found ? !unchanged : false,
+        checked_at:new Date().toISOString()
+      }), nothingToApply]);
       if (result.found) completed += 1;
       else missing += 1;
     } catch (error) {
