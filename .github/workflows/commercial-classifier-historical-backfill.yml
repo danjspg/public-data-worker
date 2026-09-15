@@ -2,14 +2,14 @@ name: Historical commercial classifier backfill
 
 on:
   schedule:
-    # One-off tranche drain at 02:10 UK, with recovery passes at 04:10 and 06:10.
+    # One-off tranche drain at 02:00 UK, with recovery passes at 04:00 and 06:00.
     # Include both GMT/BST UTC candidates and gate below.
-    - cron: "10 1 * * *"
-    - cron: "10 2 * * *"
-    - cron: "10 3 * * *"
-    - cron: "10 4 * * *"
-    - cron: "10 5 * * *"
-    - cron: "10 6 * * *"
+    - cron: "0 1 * * *"
+    - cron: "0 2 * * *"
+    - cron: "0 3 * * *"
+    - cron: "0 4 * * *"
+    - cron: "0 5 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       queue_prefix:
@@ -55,7 +55,7 @@ jobs:
             exit 0
           fi
           case "$offset:$GITHUB_EVENT_SCHEDULE" in
-            "+0100:10 1 * * *"|"+0000:10 2 * * *"|"+0100:10 3 * * *"|"+0000:10 4 * * *"|"+0100:10 5 * * *"|"+0000:10 6 * * *")
+            "+0100:0 1 * * *"|"+0000:0 2 * * *"|"+0100:0 3 * * *"|"+0000:0 4 * * *"|"+0100:0 5 * * *"|"+0000:0 6 * * *")
               echo "run=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "run=false" >> "$GITHUB_OUTPUT" ;;
           esac
