@@ -90,8 +90,73 @@ async function fetchProfessional(authority, reference) {
 
 const client = new Client({ connectionString, ssl:{ rejectUnauthorized:false } });
 await client.connect();
+
+async function promoteCommercialIntelligenceCandidates() {
+  const params = [AUTHORITY, Math.min(1000, Math.max(LIMIT * 3, 300))];
+  const { rows } = await client.query(`
+    select c.input,c.result
+    from work_items c
+    left join work_items p
+      on p.job_type='planning_professional_backfill'
+     and p.work_key=c.input->>'application_id'
+    where c.job_type='commercial_classifier_active'
+      and c.input->>'application_id' is not null
+      and coalesce(trim(c.input->>'agent_name'),'')=''
+      and ($1='' or c.input->>'local_authority_code'=$1)
+      and (
+        c.input->>'queue_source'='production-supermarket-corpus-v1'
+        or c.result->>'default_alert_eligible'='true'
+      )
+      and (p.id is null or p.status='pending')
+    order by
+      case when c.input->>'queue_source'='production-supermarket-corpus-v1' then 0 else 1 end,
+      c.completed_at desc nulls last,
+      c.id desc
+    limit $2
+  `, params);
+
+  let inserted = 0, reprioritized = 0;
+  for (const row of rows) {
+    const source = row.input || {};
+    const priority = source.queue_source === 'production-supermarket-corpus-v1' ? 5 : 10;
+    const reason = priority === 5 ? 'operator-intelligence-corpus' : 'commercial-intelligence';
+    const input = {
+      application_id:source.application_id,
+      reference:source.reference,
+      local_authority_code:source.local_authority_code,
+      registration_date:source.registration_date,
+      source_url:source.source_url || null,
+      professional_priority:priority,
+      professional_priority_reason:reason,
+    };
+    const created = await client.query(`
+      insert into work_items(job_type,work_key,input,status,available_at,updated_at)
+      values('planning_professional_backfill',$1,$2::jsonb,'pending',now(),now())
+      on conflict(job_type,work_key) do nothing
+      returning id
+    `,[String(source.application_id),JSON.stringify(input)]);
+    if (created.rowCount) {
+      inserted += 1;
+      continue;
+    }
+    const patch = JSON.stringify({ professional_priority:priority, professional_priority_reason:reason });
+    const updated = await client.query(`
+      update work_items
+      set input=input || $2::jsonb, updated_at=now()
+      where job_type='planning_professional_backfill'
+        and work_key=$1
+        and status='pending'
+        and coalesce(nullif(input->>'professional_priority','')::int,1000) > $3
+      returning id
+    `,[String(source.application_id),patch,priority]);
+    reprioritized += updated.rowCount;
+  }
+  return { candidates:rows.length, inserted, reprioritized };
+}
+
 let completed = 0, deferred = 0;
 try {
+  const promoted = await promoteCommercialIntelligenceCandidates();
   const params = [LIMIT];
   let authorityClause = '';
   if (AUTHORITY) { params.push(AUTHORITY); authorityClause = `and input->>'local_authority_code'=$2`; }
@@ -99,7 +164,10 @@ try {
     select id,input from work_items
     where job_type='planning_professional_backfill' and status='pending' and applied_at is null and available_at<=now()
       ${authorityClause}
-    order by (input->>'registration_date')::date desc, id desc
+    order by
+      coalesce(nullif(input->>'professional_priority','')::int,100) asc,
+      (input->>'registration_date')::date desc,
+      id desc
     limit $1
   `, params);
   for (const [index,item] of rows.entries()) {
@@ -115,5 +183,5 @@ try {
     }
     if (index < rows.length - 1) await sleep(DELAY_MS);
   }
-  console.log(JSON.stringify({ authority:AUTHORITY || null, selected:rows.length, completed, deferred }, null, 2));
+  console.log(JSON.stringify({ authority:AUTHORITY || null, promoted, selected:rows.length, completed, deferred }, null, 2));
 } finally { await client.end().catch(() => {}); }
