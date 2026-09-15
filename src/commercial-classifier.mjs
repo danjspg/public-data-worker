@@ -14,7 +14,8 @@ const QUEUE_SOURCE_PREFIX = String(process.env.COMMERCIAL_CLASSIFIER_QUEUE_SOURC
 const TAXONOMY_VERSION = 'commercial-v1.2';
 const CLASSIFIER_SOURCE = 'public-worker-commercial-v1.2';
 const SEMANTIC_VERSION = 'commercial-semantic-v1';
-const SOURCE_SNAPSHOT_VERSION = 'commercial-source-snapshot-v1';
+const SOURCE_SNAPSHOT_VERSION = 'commercial-source-snapshot-v2';
+const MODEL_ARTIFACT_VERSION = 'commercial-model-artifact-v2';
 
 if (!WORKER_DATABASE_URL) throw new Error('WORKER_DATABASE_URL is required');
 if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required');
@@ -413,8 +414,22 @@ function firstSourceText(sources, keys) {
   return null;
 }
 
+function canonicalJsonValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key)=>[key,canonicalJsonValue(value[key])])
+    );
+  }
+  return value;
+}
+
+function stableJson(value) {
+  return JSON.stringify(canonicalJsonValue(value));
+}
+
 function snapshotHash(value) {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  return createHash('sha256').update(stableJson(value)).digest('hex');
 }
 
 async function queueSourceSnapshots(client, rows) {
@@ -771,7 +786,7 @@ async function queueModelArtifact(client, source, result) {
   const stableResult={...result};
   delete stableResult.classified_at;
   const artifact={
-    artifact_version:'commercial-model-artifact-v1',
+    artifact_version:MODEL_ARTIFACT_VERSION,
     application_id:source.application_id || null,
     reference:source.reference,
     local_authority_code:source.local_authority_code,
