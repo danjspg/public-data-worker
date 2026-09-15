@@ -96,12 +96,19 @@ try {
         const id = Number(attrs.OBJECTID);
         if (Number.isInteger(id)) byId.set(id, attrs);
       }
-      const unresolved = batch.filter((item) => !byId.has(Number(item.input.source_application_id)));
+      const unresolved = batch.filter((item) => {
+        const attrs=byId.get(Number(item.input.source_application_id));
+        if(!attrs)return true;
+        return clean(attrs.ApplicationNumber).toUpperCase() !== clean(item.input.reference).toUpperCase();
+      });
       const byRef = unresolved.length ? await fetchByReferences(unresolved) : new Map();
       for (const item of batch) {
         const sourceId = Number(item.input.source_application_id);
         let attrs = byId.get(sourceId);
         let matchedBy = 'objectid';
+        if (attrs && clean(attrs.ApplicationNumber).toUpperCase() !== clean(item.input.reference).toUpperCase()) {
+          attrs = null;
+        }
         if (!attrs) {
           attrs = byRef.get(clean(item.input.reference).toUpperCase());
           matchedBy = 'reference';
