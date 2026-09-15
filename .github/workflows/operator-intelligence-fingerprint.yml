@@ -24,6 +24,7 @@ on:
     branches: [main]
     paths:
       - "src/operator-intelligence-fingerprint.mjs"
+      - "src/llm-budget.mjs"
       - ".github/workflows/operator-intelligence-fingerprint.yml"
 
 permissions:
