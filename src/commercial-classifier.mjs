@@ -622,16 +622,27 @@ async function main() {
     `);
 
     const {rows:items}=await client.query(`
-      select id,work_key,input,attempts
-      from work_items
-      where job_type='commercial_classifier_active'
-        and status='pending'
-        and applied_at is null
-        and available_at <= now()
-      order by
-        case when input->>'queue_source'='production-supermarket-corpus-v1' then 0 else 1 end,
-        id
-      limit $1
+      with picked as (
+        select id,attempts
+        from work_items
+        where job_type='commercial_classifier_active'
+          and status='pending'
+          and applied_at is null
+          and available_at <= now()
+        order by
+          case when input->>'queue_source'='production-supermarket-corpus-v1' then 0 else 1 end,
+          id
+        for update skip locked
+        limit $1
+      )
+      update work_items w
+      set status='running',
+          leased_at=now(),
+          attempts=w.attempts+1,
+          updated_at=now()
+      from picked
+      where w.id=picked.id
+      returning w.id,w.work_key,w.input,picked.attempts as attempts
     `,[LIMIT]);
     selected=items.length;
 
@@ -639,13 +650,6 @@ async function main() {
       console.log(JSON.stringify({ok:true,selected:0,completed:0,model:MODEL,taxonomy:TAXONOMY_VERSION}));
       return;
     }
-
-    const ids=items.map((item)=>item.id);
-    await client.query(`
-      update work_items
-      set status='running',leased_at=now(),attempts=attempts+1,updated_at=now()
-      where id=any($1::bigint[])
-    `,[ids]);
 
     const targets=items.map((item)=>item.input);
     const fetched=await sourceRows(targets);
