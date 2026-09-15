@@ -11,7 +11,7 @@ on:
       limit:
         description: "Maximum applications to enrich (1-250)"
         required: false
-        default: "100"
+        default: "250"
       years:
         description: "Historical lookback in years"
         required: false
@@ -52,7 +52,7 @@ jobs:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPERATOR_FINGERPRINT_MODEL: gpt-5.6-luna
-          OPERATOR_FINGERPRINT_LIMIT: ${{ inputs.limit || '100' }}
+          OPERATOR_FINGERPRINT_LIMIT: ${{ inputs.limit || '250' }}
           OPERATOR_FINGERPRINT_YEARS: ${{ inputs.years || '8' }}
           OPERATOR_FINGERPRINT_DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
         run: node src/operator-intelligence-fingerprint.mjs
