@@ -325,7 +325,7 @@ async function fetchAgileRow(target) {
 
   let detailId=agileDetailId(target,config);
   let searchRow=null;
-  if (!detailId || config.resolveBySearch) {
+  if (!detailId || config.resolveBySearch || !clean(target.agent_name)) {
     const params=new URLSearchParams({reference:String(target.reference).trim()});
     const json=await fetchJson(`${AGILE_SEARCH}?${params}`,{headers:agileHeaders(config.client)});
     await sleep(125);
@@ -343,7 +343,12 @@ async function fetchAgileRow(target) {
     allowNotFound:true
   });
   await sleep(125);
-  return detail || searchRow;
+  if (!detail) return searchRow;
+  return {
+    ...(searchRow || {}),
+    ...detail,
+    agentName: detail.agentName || detail.agent?.name || searchRow?.agentName || null
+  };
 }
 
 async function sourceRows(targets) {
@@ -360,6 +365,7 @@ async function sourceRows(targets) {
     let location = clean(national?.DevelopmentAddress || target.location);
     let applicationType = clean(national?.ApplicationType || target.application_type);
     let applicantName = [national?.ApplicantForename,national?.ApplicantSurname].map(clean).filter(Boolean).join(' ') || clean(target.applicant_name);
+    let agentName = clean(target.agent_name);
     let sourceKind = national ? 'arcgis' : (proposal ? 'worker-input' : null);
 
     const kildareRow=kildare.get(key);
@@ -368,6 +374,7 @@ async function sourceRows(targets) {
       location=clean(kildareRow.DevelopmentAddress);
       applicationType=clean(kildareRow.Type);
       applicantName=clean(kildareRow.ApplicantName);
+      agentName=clean(kildareRow.AgentName || kildareRow.Agent || kildareRow.agentName || agentName);
       sourceKind='kildare-register';
     }
 
@@ -379,6 +386,7 @@ async function sourceRows(targets) {
           location = clean(detail.siteAddress || detail.developmentAddress || (typeof detail.location === 'string' ? detail.location : '') || location);
           applicationType = clean(detail.applicationType || detail.type || applicationType);
           applicantName = clean(detail.applicantName || detail.applicantSurname || applicantName);
+          agentName = clean(detail.agentName || detail.agent?.name || agentName);
           sourceKind = detail.fullProposal ? 'agile-detail' : 'agile-search';
         }
       } catch (error) {
@@ -401,6 +409,7 @@ async function sourceRows(targets) {
       proposal,
       location:location || null,
       applicant_name:applicantName || null,
+      agent_name:agentName || null,
       normalized_status:target.normalized_status,
       registration_date:target.registration_date,
       source_kind:sourceKind || 'target-only'
@@ -546,10 +555,66 @@ ${taxonomyText}`;
   throw lastError;
 }
 
+function normalizeProfessionalName(value) {
+  return clean(value)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[’‘`]/g,"'")
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+async function persistHydratedAgent(client, source) {
+  const raw=clean(source.agent_name);
+  const normalized=normalizeProfessionalName(raw);
+  if (!raw || !normalized || !source.application_id) return false;
+
+  const result={
+    ok:true,
+    reason:null,
+    source_family:source.source_kind || 'classifier-hydration',
+    source_url:source.source_url || source.source_api_url || null,
+    professionals:[{
+      role:'agent',
+      raw_name:raw,
+      raw_name_normalized:normalized,
+      confidence:100,
+      source_payload:{captured_during:'commercial-classifier-hydration'}
+    }]
+  };
+  const input={
+    application_id:source.application_id,
+    reference:source.reference,
+    local_authority_code:source.local_authority_code,
+    registration_date:source.registration_date || null,
+    source_url:source.source_url || null,
+    professional_priority:0,
+    professional_priority_reason:'captured-during-commercial-hydration'
+  };
+
+  const {rowCount}=await client.query(`
+    insert into work_items(
+      job_type,work_key,input,result,status,attempts,available_at,completed_at,updated_at
+    )
+    values('planning_professional_backfill',$1,$2::jsonb,$3::jsonb,'completed',1,now(),now(),now())
+    on conflict(job_type,work_key) do update
+    set input=work_items.input || excluded.input,
+        result=excluded.result,
+        status='completed',
+        completed_at=now(),
+        last_error=null,
+        updated_at=now()
+    where work_items.status <> 'completed'
+    returning id
+  `,[String(source.application_id),JSON.stringify(input),JSON.stringify(result)]);
+  return rowCount>0;
+}
+
 async function storeResults(client, sourceRows, classifications) {
   const sourceById=new Map(sourceRows.map((row)=>[row.application_id,row]));
   for (const item of classifications) {
     const source=sourceById.get(item.application_id);
+    await persistHydratedAgent(client,source);
     const categories=collapseAncestors([...new Set(item.commercial_categories||[])]);
     const result={
       taxonomy_version:TAXONOMY_VERSION,
