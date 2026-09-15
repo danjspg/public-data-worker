@@ -1,0 +1,42 @@
+name: Target supermarket fingerprint corpus
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Maximum likely supermarket records to discover"
+        default: "500"
+      years:
+        description: "Historical lookback"
+        default: "8"
+  schedule:
+    - cron: "15 1 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "src/supermarket-fingerprint-discovery.mjs"
+      - ".github/workflows/supermarket-fingerprint-discovery.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supermarket-fingerprint-discovery
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Discover and queue likely supermarkets
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          SUPERMARKET_DISCOVERY_LIMIT: ${{ inputs.limit || '500' }}
+          SUPERMARKET_DISCOVERY_YEARS: ${{ inputs.years || '8' }}
+        run: node src/supermarket-fingerprint-discovery.mjs
