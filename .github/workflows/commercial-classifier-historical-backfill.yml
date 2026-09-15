@@ -1,6 +1,15 @@
 name: Historical commercial classifier backfill
 
 on:
+  schedule:
+    # One-off tranche drain at 02:10 UK, with recovery passes at 04:10 and 06:10.
+    # Include both GMT/BST UTC candidates and gate below.
+    - cron: "10 1 * * *"
+    - cron: "10 2 * * *"
+    - cron: "10 3 * * *"
+    - cron: "10 4 * * *"
+    - cron: "10 5 * * *"
+    - cron: "10 6 * * *"
   workflow_dispatch:
     inputs:
       queue_prefix:
@@ -15,6 +24,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: historical-commercial-classifier-backfill
+  cancel-in-progress: false
+
 jobs:
   classify:
     strategy:
@@ -23,18 +36,44 @@ jobs:
       matrix:
         lane: [1, 2, 3, 4]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 180
     steps:
+      - name: Select scheduled UK drain
+        id: drain_window
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          local_date="$(TZ=Europe/London date +%F)"
+          offset="$(TZ=Europe/London date +%z)"
+          if [ "$local_date" != "2026-09-16" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$offset:$GITHUB_EVENT_SCHEDULE" in
+            "+0100:10 1 * * *"|"+0000:10 2 * * *"|"+0100:10 3 * * *"|"+0000:10 4 * * *"|"+0100:10 5 * * *"|"+0000:10 6 * * *")
+              echo "run=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "run=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - uses: actions/checkout@v7
+        if: steps.drain_window.outputs.run == 'true'
       - uses: actions/setup-node@v7
+        if: steps.drain_window.outputs.run == 'true'
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - if: steps.drain_window.outputs.run == 'true'
+        run: npm install --no-audit --no-fund
       - name: Drain historical commercial queue lane
+        if: steps.drain_window.outputs.run == 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          COMMERCIAL_CLASSIFIER_LIMIT: ${{ inputs.limit_per_lane || '300' }}
+          COMMERCIAL_CLASSIFIER_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.limit_per_lane || '500' }}
           COMMERCIAL_CLASSIFIER_BATCH_SIZE: "8"
           COMMERCIAL_CLASSIFIER_MAX_ATTEMPTS: "4"
           COMMERCIAL_CLASSIFIER_QUEUE_SOURCE_PREFIX: ${{ inputs.queue_prefix || 'historical-notable-' }}
