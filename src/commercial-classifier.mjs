@@ -4,7 +4,7 @@ const { Client } = pg;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const WORKER_DATABASE_URL = process.env.WORKER_DATABASE_URL;
-const LIMIT = Math.max(1, Math.min(200, Number(process.env.COMMERCIAL_CLASSIFIER_LIMIT || 40)));
+const LIMIT = Math.max(1, Math.min(500, Number(process.env.COMMERCIAL_CLASSIFIER_LIMIT || 40)));
 const BATCH_SIZE = Math.max(1, Math.min(8, Number(process.env.COMMERCIAL_CLASSIFIER_BATCH_SIZE || 8)));
 const MAX_ATTEMPTS = Math.max(1, Math.min(8, Number(process.env.COMMERCIAL_CLASSIFIER_MAX_ATTEMPTS || 4)));
 const MODEL = 'gpt-5.6-terra';
