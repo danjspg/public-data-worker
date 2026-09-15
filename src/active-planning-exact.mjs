@@ -63,18 +63,11 @@ let selected = 0, completed = 0, referenceFallback = 0, missing = 0, failed = 0;
 try {
   const { rows } = await client.query(`
     select i.id, i.input,
-           prev.result as previous_result
+           s.last_applied_signature
     from work_items i
-    left join lateral (
-      select p.result
-      from work_items p
-      where p.job_type='active_planning_exact'
-        and p.applied_at is not null
-        and p.id < i.id
-        and p.input->>'application_id'=i.input->>'application_id'
-      order by p.id desc
-      limit 1
-    ) prev on true
+    left join source_sync_state s
+      on s.job_family='active_planning_exact'
+     and s.application_key=i.input->>'application_id'
     where i.job_type='active_planning_exact'
       and i.status='pending'
       and i.applied_at is null
@@ -132,8 +125,9 @@ try {
         }
         const baseResult={ ok:true, found:true, matched_by:matchedBy, attributes:attrs };
         const sourceSignature=activeExactSignature(baseResult);
-        const previousSignature=activeExactSignature(item.previous_result);
+        const previousSignature=item.last_applied_signature || null;
         const unchanged=Boolean(sourceSignature && previousSignature && sourceSignature===previousSignature);
+        const checkedAt=new Date().toISOString();
         await client.query(`
           update work_items
           set status='completed',
@@ -147,8 +141,16 @@ try {
           ...baseResult,
           source_signature:sourceSignature,
           change_detected:!unchanged,
-          checked_at:new Date().toISOString()
+          checked_at:checkedAt
         }), unchanged]);
+        await client.query(`
+          insert into source_sync_state(job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at)
+          values('active_planning_exact',$1,$2,case when $3 then $2 else null end,'{}'::jsonb,now())
+          on conflict(job_family,application_key) do update
+          set last_checked_at=excluded.last_checked_at,
+              last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
+              updated_at=now()
+        `,[String(item.input.application_id),checkedAt,!unchanged]);
         completed += 1;
         if (matchedBy === 'reference') referenceFallback += 1;
       }
