@@ -8,7 +8,8 @@ on:
       - "src/bcms-acquisition.mjs"
       - "package.json"
   schedule:
-    - cron: "15 7 * * 1"
+    # NBCO publishes on Sunday; stage the weekly BCMS delta before OpenList's 03:20 UTC production maintenance window.
+    - cron: "15 1 * * 1"
   workflow_dispatch:
 
 permissions:
