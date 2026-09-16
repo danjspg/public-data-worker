@@ -2,14 +2,9 @@ name: Historical commercial classifier backfill
 
 on:
   schedule:
-    # One-off tranche drain at 02:00 UK, with recovery passes at 04:00 and 06:00.
-    # Include both GMT/BST UTC candidates and gate below.
+    # Two remaining historical drains at 02:00 Europe/London on 17 and 18 Sep 2026.
+    # September is BST, so 02:00 local = 01:00 UTC.
     - cron: "0 1 * * *"
-    - cron: "0 2 * * *"
-    - cron: "0 3 * * *"
-    - cron: "0 4 * * *"
-    - cron: "0 5 * * *"
-    - cron: "0 6 * * *"
   workflow_dispatch:
     inputs:
       queue_prefix:
@@ -19,7 +14,7 @@ on:
       limit_per_lane:
         description: "Maximum records claimed per lane"
         required: false
-        default: "300"
+        default: "475"
 
 permissions:
   contents: read
@@ -50,12 +45,8 @@ jobs:
           fi
           local_date="$(TZ=Europe/London date +%F)"
           offset="$(TZ=Europe/London date +%z)"
-          if [ "$local_date" != "2026-09-16" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          case "$offset:$GITHUB_EVENT_SCHEDULE" in
-            "+0100:0 1 * * *"|"+0000:0 2 * * *"|"+0100:0 3 * * *"|"+0000:0 4 * * *"|"+0100:0 5 * * *"|"+0000:0 6 * * *")
+          case "$local_date:$offset:$GITHUB_EVENT_SCHEDULE" in
+            "2026-09-17:+0100:0 1 * * *"|"2026-09-18:+0100:0 1 * * *")
               echo "run=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "run=false" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -73,7 +64,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          COMMERCIAL_CLASSIFIER_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.limit_per_lane || '500' }}
+          COMMERCIAL_CLASSIFIER_LIMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.limit_per_lane || '475' }}
           COMMERCIAL_CLASSIFIER_BATCH_SIZE: "8"
           COMMERCIAL_CLASSIFIER_MAX_ATTEMPTS: "4"
           COMMERCIAL_CLASSIFIER_QUEUE_SOURCE_PREFIX: ${{ inputs.queue_prefix || 'historical-notable-' }}
