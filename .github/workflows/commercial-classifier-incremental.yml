@@ -26,13 +26,18 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          now_epoch="$(TZ=Europe/London date +%s)"
-          cutoff_epoch="$(TZ=Europe/London date -d '2026-09-16 02:00:00' +%s)"
-          if [ "$now_epoch" -lt "$cutoff_epoch" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
+          local_date="$(TZ=Europe/London date +%F)"
+          local_hour="$(TZ=Europe/London date +%H)"
+          case "$local_date" in
+            2026-09-17|2026-09-18)
+              if [ "$local_hour" -lt 2 ]; then
+                echo "run=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "run=true" >> "$GITHUB_OUTPUT"
+              fi ;;
+            *)
+              echo "run=true" >> "$GITHUB_OUTPUT" ;;
+          esac
 
       - uses: actions/checkout@v7
         if: steps.budget_window.outputs.run == 'true'
