@@ -1,9 +1,6 @@
 name: Historical commercial classifier backfill
 
 on:
-  push:
-    paths:
-      - ".github/workflows/commercial-classifier-historical-backfill.yml"
   schedule:
     # One-off tranche drain at 02:00 UK, with recovery passes at 04:00 and 06:00.
     # Include both GMT/BST UTC candidates and gate below.
