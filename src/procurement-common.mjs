@@ -36,21 +36,34 @@ export function arrayOfText(value) {
 export function dateOnly(value) {
   const s = scalar(value);
   if (!s) return null;
-  const m = s.match(/(20\d{2}|19\d{2})[-/]?(\d{2})[-/]?(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const iso = s.match(/(20\d{2}|19\d{2})[-/]?(\d{2})[-/]?(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const eu = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](20\d{2}|19\d{2})/);
+  if (eu) return `${eu[3]}-${eu[2].padStart(2, '0')}-${eu[1].padStart(2, '0')}`;
   const d = new Date(s);
   return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : null;
 }
 export function timestamp(value) {
   const s = scalar(value);
   if (!s) return null;
+  const eu = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](20\d{2}|19\d{2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (eu) {
+    const iso = `${eu[3]}-${eu[2].padStart(2, '0')}-${eu[1].padStart(2, '0')}T${(eu[4] || '00').padStart(2, '0')}:${eu[5] || '00'}:${eu[6] || '00'}Z`;
+    const d = new Date(iso);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+  }
   const d = new Date(s);
   return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 }
 export function numberValue(value) {
   const s = scalar(value);
   if (!s) return null;
-  const n = Number(s.replace(/[^0-9.\-]/g, ''));
+  let cleaned = s.replace(/\s/g, '').replace(/[^0-9,.-]/g, '');
+  if (cleaned.includes(',') && !cleaned.includes('.')) {
+    const parts = cleaned.split(',');
+    cleaned = parts.length === 2 && parts[1].length <= 2 ? `${parts[0]}.${parts[1]}` : parts.join('');
+  } else cleaned = cleaned.replace(/,/g, '');
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
 export async function fetchText(url, timeoutMs = 60000) {
@@ -59,7 +72,10 @@ export async function fetchText(url, timeoutMs = 60000) {
     try {
       const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.text();
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      let text = new TextDecoder('utf-8').decode(bytes);
+      if (text.includes('\uFFFD')) text = new TextDecoder('windows-1252').decode(bytes);
+      return text;
     } catch (error) {
       lastError = error;
       if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
@@ -111,33 +127,41 @@ export function pick(row, aliases) {
   }
   return null;
 }
+function splitList(value) {
+  const s = scalar(value);
+  if (!s) return [];
+  return [...new Set(s.split(/[;|]+/).map((v) => v.trim()).filter(Boolean))];
+}
 export function normalizeOgpRow(row, rowIndex) {
-  const noticeId = pick(row, ['Notice ID','NoticeID','Contract Notice ID','RFT ID','RFTID','Tender ID','Competition ID','ID']);
-  const procedureId = pick(row, ['Procedure ID','ProcedureID','RFT ID','RFTID','Competition ID']);
-  const title = pick(row, ['Title','Tender Title','Contract Title','RFT Title','Competition Title','Notice Title']);
-  const publicationDate = dateOnly(pick(row, ['Publication Date','Published Date','Date Published','Notice Publication Date','Publish Date']));
-  const buyerName = pick(row, ['Buyer Name','Contracting Authority','Organisation Name','Organization Name','Authority Name','Purchaser Name']);
-  const winner = pick(row, ['Supplier Name','Successful Supplier','Winner Name','Contractor Name','Awarded Supplier']);
-  const awardDate = dateOnly(pick(row, ['Award Date','Contract Award Date','Date Awarded']));
-  const deadline = timestamp(pick(row, ['Deadline','Closing Date','Response Deadline','Tender Deadline','Closing Date and Time']));
-  const cpv = pick(row, ['CPV','CPV Code','Main CPV','CPVCode']);
-  const estimatedValue = numberValue(pick(row, ['Estimated Value','Estimated Contract Value','Tender Value','EstimatedValue']));
-  const awardedValue = numberValue(pick(row, ['Award Value','Contract Value','Value of Contract','Awarded Value']));
+  const noticeId = pick(row, ['Tender ID','Notice ID','NoticeID','Contract Notice ID','RFT ID','RFTID','Competition ID','ID']);
+  const procedureId = pick(row, ['Parent Agreement ID','Procedure ID','ProcedureID','RFT ID','RFTID','Competition ID']);
+  const title = pick(row, ['Tender/Contract Name','Title','Tender Title','Contract Title','RFT Title','Competition Title','Notice Title']);
+  const publicationDate = dateOnly(pick(row, ['Notice Published Date / Contract Created Date','Publication Date','Published Date','Date Published','Notice Publication Date','Publish Date']));
+  const buyerName = pick(row, ['Name of Client Contracting Authority','Buyer Name','Contracting Authority','Organisation Name','Organization Name','Authority Name','Purchaser Name']);
+  const winnerRaw = pick(row, ['Awarded Suppliers','Supplier Name','Successful Supplier','Winner Name','Contractor Name','Awarded Supplier']);
+  const winners = splitList(winnerRaw);
+  const awardDate = dateOnly(pick(row, ['Award Published','Award Date','Contract Award Date','Date Awarded']));
+  const deadline = timestamp(pick(row, ['Tender Submission Deadline','Deadline','Closing Date','Response Deadline','Tender Deadline','Closing Date and Time']));
+  const mainCpv = pick(row, ['Main Cpv Code','Main CPV Code','CPV','CPV Code','Main CPV','CPVCode']);
+  const extraCpv = pick(row, ['Additional CPV Codes on CFT','Additional CPV Codes','Additional CPV']);
+  const cpvCodes = [...new Set([mainCpv, ...(extraCpv ? extraCpv.split(/[;,|\s]+/) : [])].filter(Boolean))];
+  const estimatedValue = numberValue(pick(row, ['Sum of Notice Estimated Value (€)','Sum of Notice Estimated Value','Estimated Value','Estimated Contract Value','Tender Value','EstimatedValue']));
+  const awardedValue = numberValue(pick(row, ['Sum of Awarded Value (€)','Sum of Awarded Value','Award Value','Contract Value','Value of Contract','Awarded Value']));
   const currency = pick(row, ['Currency','Value Currency','Contract Currency']) || 'EUR';
-  const description = pick(row, ['Description','Contract Description','Tender Description','Short Description']);
-  const noticeType = pick(row, ['Notice Type','Type of Notice','Procedure Type','Tender Type']);
-  const sourceUrl = pick(row, ['URL','Notice URL','Tender URL','eTenders URL','Link']);
-  const identity = noticeId || procedureId || `${publicationDate || 'undated'}:${buyerName || 'unknown'}:${title || 'untitled'}:${rowIndex}`;
-  const kind = winner || awardDate ? 'award' : (/prior|pin/i.test(noticeType || '') ? 'prior_information' : 'notice');
+  const description = pick(row, ['Description','Contract Description','Tender Description','Short Description','Main Cpv Code Description']);
+  const noticeType = pick(row, ['Competition Type','Procedure','Notice Type','Type of Notice','Procedure Type','Tender Type']);
+  const sourceUrl = pick(row, ['TED CAN Link','TED Notice Link','URL','Notice URL','Tender URL','eTenders URL','Link']);
+  const identity = noticeId || procedureId || `${publicationDate || awardDate || 'undated'}:${buyerName || 'unknown'}:${title || 'untitled'}:${rowIndex}`;
+  const kind = winners.length || awardDate || awardedValue != null ? 'award' : (/prior|pin/i.test(noticeType || '') ? 'prior_information' : 'notice');
   const normalized = {
     source: 'ogp_etenders', source_record_key: `ogp:${sha256(identity).slice(0, 32)}`,
     source_notice_id: noticeId, source_procedure_id: procedureId, record_kind: kind, notice_type: noticeType,
     publication_date: publicationDate, title, description, buyer_name: buyerName, buyer_identifier: null, buyer_country: 'IRL',
-    contract_nature: pick(row, ['Contract Nature','Nature of Contract','Contract Type']), cpv_codes: cpv ? cpv.split(/[;,|\s]+/).filter(Boolean) : [],
-    deadline, award_date: awardDate, winner_names: winner ? [winner] : [], estimated_value: estimatedValue,
+    contract_nature: pick(row, ['Contract Type','Contract Nature','Nature of Contract']), cpv_codes: cpvCodes,
+    deadline, award_date: awardDate, winner_names: winners, estimated_value: estimatedValue,
     estimated_value_currency: estimatedValue != null ? currency : null, awarded_value: awardedValue,
-    awarded_value_currency: awardedValue != null ? currency : null, place_of_performance: pick(row, ['Place of Performance','Location','County']),
-    source_url: sourceUrl, source_updated_at: null,
+    awarded_value_currency: awardedValue != null ? currency : null,
+    place_of_performance: pick(row, ['Place of Performance','Location','County']), source_url: sourceUrl, source_updated_at: null,
   };
   return { ...normalized, source_hash: sha256({ ...normalized, raw: row }), raw_source: row };
 }
