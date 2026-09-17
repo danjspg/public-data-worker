@@ -173,6 +173,15 @@ export function normalizeTedNotice(n) {
   const awardDate = dateOnly(n['winner-decision-date']) || dateOnly(n['contract-conclusion-date']);
   const recordKind = winnerNames.length || /can-|award/i.test(noticeType || '') ? 'award' : (/pin-|prior/i.test(noticeType || '') ? 'prior_information' : 'notice');
   const sourceUrl = pub ? `https://ted.europa.eu/en/notice/-/detail/${pub}` : null;
+  const totalValue = numberValue(n['total-value']);
+  const totalCurrency = scalar(n['total-value-cur']);
+  const explicitEstimatedValue = numberValue(n['estimated-value-proc']);
+  const explicitEstimatedCurrency = scalar(n['estimated-value-cur-proc']);
+  const isAward = recordKind === 'award';
+  const estimatedValue = explicitEstimatedValue ?? (isAward ? null : totalValue);
+  const estimatedCurrency = explicitEstimatedCurrency ?? (isAward ? null : totalCurrency);
+  const awardedValue = isAward ? totalValue : null;
+  const awardedCurrency = isAward ? totalCurrency : null;
   const normalized = {
     source: 'ted', source_record_key: pub ? `ted:${pub}` : `ted:${sha256(n).slice(0, 32)}`,
     source_notice_id: pub, source_procedure_id: scalar(n['procedure-identifier']), record_kind: recordKind,
@@ -180,10 +189,9 @@ export function normalizeTedNotice(n) {
     description: scalar(n['description-proc']), buyer_name: scalar(n['buyer-name']), buyer_identifier: scalar(n['buyer-identifier']),
     buyer_country: scalar(n['buyer-country']) || 'IRL', contract_nature: scalar(n['contract-nature']),
     cpv_codes: arrayOfText(n['classification-cpv']), deadline: timestamp(n['deadline']), award_date: awardDate,
-    winner_names: winnerNames, estimated_value: numberValue(n['estimated-value-proc'] ?? n['total-value']),
-    estimated_value_currency: scalar(n['estimated-value-cur-proc'] ?? n['total-value-cur']), awarded_value: numberValue(n['total-value']),
-    awarded_value_currency: scalar(n['total-value-cur']), place_of_performance: scalar(n['place-of-performance']),
-    source_url: sourceUrl, source_updated_at: null,
+    winner_names: winnerNames, estimated_value: estimatedValue, estimated_value_currency: estimatedCurrency,
+    awarded_value: awardedValue, awarded_value_currency: awardedCurrency,
+    place_of_performance: scalar(n['place-of-performance']), source_url: sourceUrl, source_updated_at: null,
   };
   return { ...normalized, source_hash: sha256(n), raw_source: n };
 }
