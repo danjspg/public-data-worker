@@ -1,0 +1,37 @@
+name: "[PUBLIC] Procurement eTenders recent refresh"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/procurement-ogp-refresh.yml"
+      - "src/procurement-ogp.mjs"
+      - "src/procurement-common.mjs"
+  schedule:
+    - cron: "10 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-procurement-ogp-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Refresh recent eTenders records
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          PROCUREMENT_OGP_MODE: "incremental"
+          PROCUREMENT_OGP_BATCH: "2000"
+          PROCUREMENT_OGP_RECENT_DAYS: "210"
+        run: node src/procurement-ogp.mjs
