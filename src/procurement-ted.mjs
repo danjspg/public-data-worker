@@ -22,7 +22,7 @@ const client = new Client({ connectionString, ssl: { rejectUnauthorized: false }
 await client.connect();
 let pages = 0, seen = 0, staged = 0, unchanged = 0;
 try {
-  const query = `buyer-country=IRL AND publication-date=(${ymd(startDate())} <> ${ymd(new Date())}) SORT BY publication-date ASC`;
+  const query = `buyer-country=IRL AND publication-date=(${ymd(startDate())} <> ${ymd(new Date())})`;
   let token;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const body = { query, fields, limit: PAGE_LIMIT, scope: 'ALL', checkQuerySyntax: false, paginationMode: 'ITERATION', onlyLatestVersions: false };
@@ -49,7 +49,7 @@ try {
       staged += 1;
     }
     token = payload.iterationNextToken;
-    if (notices.length < PAGE_LIMIT) break;
+    if (!token || notices.length < PAGE_LIMIT) break;
   }
   await client.query(`insert into source_state(source_key,fingerprint,state,first_seen_at,last_seen_at,updated_at)
     values('procurement:ted',$1,$2::jsonb,now(),now(),now()) on conflict(source_key) do update set fingerprint=excluded.fingerprint,state=excluded.state,last_seen_at=now(),updated_at=now()`,
