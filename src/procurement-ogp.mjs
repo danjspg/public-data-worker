@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { OGP_CSV_URL, fetchText, parseCsv, normalizeOgpRow, stageProcurement, pick, sha256 } from './procurement-common.mjs';
+import { OGP_CSV_URL, fetchText, parseCsv, normalizeOgpRow, stageProcurement, sha256 } from './procurement-common.mjs';
 
 const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
@@ -9,13 +9,7 @@ const BATCH = Math.max(100, Math.min(Number(process.env.PROCUREMENT_OGP_BATCH ||
 const RECENT_DAYS = Math.max(60, Math.min(Number(process.env.PROCUREMENT_OGP_RECENT_DAYS || 210), 730));
 
 function withStableKey(row, index) {
-  const record = normalizeOgpRow(row, index);
-  const lot = pick(row, ['Lot','Lot ID','Lot Number','Lot No','LotNo']);
-  const identity = [record.source_notice_id, record.source_procedure_id, lot, ...(record.winner_names || []), record.title, record.publication_date]
-    .filter(Boolean).join('|') || `row:${index}`;
-  record.source_record_key = `ogp:${sha256(identity).slice(0, 32)}`;
-  record.source_hash = sha256({ ...record, raw_source: row });
-  return record;
+  return normalizeOgpRow(row, index);
 }
 async function setJob(client, jobKey, cursor, status, error = null) {
   await client.query(`insert into worker_jobs(job_key,cursor,last_started_at,last_completed_at,last_status,last_error,updated_at)
@@ -38,7 +32,7 @@ try {
     const cutoff = new Date(); cutoff.setUTCDate(cutoff.getUTCDate() - RECENT_DAYS);
     const cutoffText = cutoff.toISOString().slice(0, 10);
     const candidates = rows.map((row, index) => ({ row, index, record: withStableKey(row, index) }))
-      .filter(({ record }) => (record.publication_date || record.award_date || '') >= cutoffText)
+      .filter(({ record }) => Math.max(record.publication_date || '', record.award_date || '') >= cutoffText)
       .slice(-BATCH);
     for (const { record } of candidates) {
       const stateKey = `procurement:ogp:${record.source_record_key}`;
@@ -47,7 +41,7 @@ try {
       await stageProcurement(client, 'procurement_ogp_record', record);
       await client.query(`insert into source_state(source_key,fingerprint,state,first_seen_at,last_seen_at,updated_at)
         values($1,$2,$3::jsonb,now(),now(),now()) on conflict(source_key) do update set fingerprint=excluded.fingerprint,state=excluded.state,last_seen_at=now(),updated_at=now()`,
-        [stateKey, record.source_hash, JSON.stringify({ publication_date: record.publication_date, source_record_key: record.source_record_key })]);
+        [stateKey, record.source_hash, JSON.stringify({ publication_date: record.publication_date, award_date: record.award_date, source_record_key: record.source_record_key })]);
       staged += 1;
     }
     start = Math.max(0, rows.length - candidates.length); end = rows.length;
