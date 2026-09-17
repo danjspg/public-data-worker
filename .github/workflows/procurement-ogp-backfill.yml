@@ -1,0 +1,36 @@
+name: "[PUBLIC] Procurement eTenders historical backfill"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/procurement-ogp-backfill.yml"
+      - "src/procurement-ogp.mjs"
+      - "src/procurement-common.mjs"
+  schedule:
+    - cron: "50 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-procurement-ogp-backfill
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Stage next historical eTenders batch
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          PROCUREMENT_OGP_MODE: "backfill"
+          PROCUREMENT_OGP_BATCH: "1000"
+        run: node src/procurement-ogp.mjs
