@@ -1,0 +1,41 @@
+name: "[PUBLIC] Procurement TED incremental"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/procurement-ted-incremental.yml"
+      - "src/procurement-ted.mjs"
+      - "src/procurement-common.mjs"
+  schedule:
+    - cron: "40 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-procurement-ted
+  cancel-in-progress: false
+
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Fetch recent Irish TED notices
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          TED_LOOKBACK_DAYS: "7"
+          TED_PAGE_LIMIT: "200"
+          TED_MAX_PAGES: "50"
+        run: node src/procurement-ted.mjs
