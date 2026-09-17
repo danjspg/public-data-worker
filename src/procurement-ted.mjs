@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { TED_SEARCH_URL, fetchJson, normalizeTedNotice, stageProcurement } from './procurement-common.mjs';
+import { TED_SEARCH_URL, fetchJson, normalizeTedNotice, sha256, stageProcurement } from './procurement-common.mjs';
 
 const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
@@ -7,6 +7,7 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 const LOOKBACK_DAYS = Math.max(2, Math.min(Number(process.env.TED_LOOKBACK_DAYS || 7), 60));
 const PAGE_LIMIT = Math.max(20, Math.min(Number(process.env.TED_PAGE_LIMIT || 200), 250));
 const MAX_PAGES = Math.max(1, Math.min(Number(process.env.TED_MAX_PAGES || 50), 200));
+const NORMALIZATION_VERSION = 'ted-v2';
 
 function ymd(date) { return date.toISOString().slice(0, 10).replaceAll('-', ''); }
 function startDate() { const d = new Date(); d.setUTCDate(d.getUTCDate() - LOOKBACK_DAYS); return d; }
@@ -35,6 +36,7 @@ try {
     for (const raw of notices) {
       seen += 1;
       const record = normalizeTedNotice(raw);
+      record.source_hash = sha256({ normalization: NORMALIZATION_VERSION, raw });
       const stateKey = `procurement:ted:${record.source_notice_id || record.source_record_key}`;
       const prior = await client.query('select fingerprint from source_state where source_key=$1', [stateKey]);
       if (prior.rows[0]?.fingerprint === record.source_hash) {
@@ -45,7 +47,7 @@ try {
       await stageProcurement(client, 'procurement_ted_notice', record);
       await client.query(`insert into source_state(source_key,fingerprint,state,first_seen_at,last_seen_at,updated_at)
         values($1,$2,$3::jsonb,now(),now(),now()) on conflict(source_key) do update set fingerprint=excluded.fingerprint,state=excluded.state,last_seen_at=now(),updated_at=now()`,
-        [stateKey, record.source_hash, JSON.stringify({ publication_date: record.publication_date, source_record_key: record.source_record_key })]);
+        [stateKey, record.source_hash, JSON.stringify({ publication_date: record.publication_date, source_record_key: record.source_record_key, normalization: NORMALIZATION_VERSION })]);
       staged += 1;
     }
     token = payload.iterationNextToken;
@@ -53,8 +55,8 @@ try {
   }
   await client.query(`insert into source_state(source_key,fingerprint,state,first_seen_at,last_seen_at,updated_at)
     values('procurement:ted',$1,$2::jsonb,now(),now(),now()) on conflict(source_key) do update set fingerprint=excluded.fingerprint,state=excluded.state,last_seen_at=now(),updated_at=now()`,
-    [new Date().toISOString(), JSON.stringify({ status: 'ready', lookback_days: LOOKBACK_DAYS, pages, seen, staged, unchanged })]);
-  console.log(JSON.stringify({ query, pages, seen, staged, unchanged }, null, 2));
+    [new Date().toISOString(), JSON.stringify({ status: 'ready', lookback_days: LOOKBACK_DAYS, pages, seen, staged, unchanged, normalization: NORMALIZATION_VERSION })]);
+  console.log(JSON.stringify({ query, normalization: NORMALIZATION_VERSION, pages, seen, staged, unchanged }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
