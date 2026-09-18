@@ -1,0 +1,58 @@
+name: "[PUBLIC] Procurement TED historical 24m"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/procurement-ted-historical.yml"
+      - "src/procurement-ted-historical.mjs"
+      - "src/procurement-common.mjs"
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Inclusive YYYY-MM-DD; blank defaults to 24 months ago"
+        required: false
+        default: ""
+        type: string
+      end_date:
+        description: "Inclusive YYYY-MM-DD; blank defaults to 6 months ago"
+        required: false
+        default: ""
+        type: string
+      reset_cursor:
+        description: "Ignore saved cursor and rescan the requested range"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-procurement-ted-historical
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check worker database
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: npm run health
+      - name: Stage historical Irish TED notices to worker
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          TED_HISTORICAL_START_DATE: ${{ inputs.start_date || '' }}
+          TED_HISTORICAL_END_DATE: ${{ inputs.end_date || '' }}
+          TED_HISTORICAL_RESET_CURSOR: ${{ inputs.reset_cursor || 'false' }}
+          TED_HISTORICAL_PAGE_LIMIT: "250"
+          TED_HISTORICAL_MAX_PAGES_PER_WINDOW: "20"
+          TED_HISTORICAL_PAUSE_MS: "350"
+        run: node src/procurement-ted-historical.mjs
