@@ -10,6 +10,9 @@ const BATCH_SIZE = Math.max(1, Math.min(Number(process.env.ACTIVE_PLANNING_SOURC
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const SOURCE_AUTHORITY_BY_CODE = new Map([
+  ['CORKCOCO','Cork County Council'],
+  ['CORKCITY','Cork City Council'],
+  ['WEXFORD','Wexford County Council'],
   ['DUBLINCITY','Dublin City Council'],
   ['FINGAL','Fingal County Council'],
   ['SOUTHDUBLIN','South Dublin County Council'],
@@ -76,18 +79,23 @@ function sourceKey(authority, reference) {
   return `${clean(authority).toUpperCase()}|${clean(reference).toUpperCase()}`;
 }
 
-async function fetchByReferences(items) {
+async function fetchAuthorityReferences(authorityCode, items) {
+  const sourceAuthority = SOURCE_AUTHORITY_BY_CODE.get(authorityCode);
+  if (!sourceAuthority) throw new Error(`Unknown source authority ${authorityCode}`);
   const refs = [...new Set(items.map((item) => clean(item.input.reference)).filter(Boolean))];
   if (!refs.length) return new Map();
-  const where = `ApplicationNumber IN (${refs.map((ref) => `'${escapeSql(ref)}'`).join(',')})`;
+  const where = [
+    `PlanningAuthority = '${escapeSql(sourceAuthority)}'`,
+    `ApplicationNumber IN (${refs.map((ref) => `'${escapeSql(ref)}'`).join(',')})`,
+  ].join(' AND ');
   const params = new URLSearchParams({
     where,
     outFields: '*',
     returnGeometry: 'false',
     f: 'json',
-    resultRecordCount: String(Math.max(200, refs.length * 4)),
+    resultRecordCount: '2000',
   });
-  const json = await fetchArcgis(params, 'reference lookup');
+  const json = await fetchArcgis(params, `${authorityCode} reference lookup`);
   const byRef = new Map();
   for (const feature of json.features || []) {
     const attrs = feature.attributes || {};
@@ -117,105 +125,130 @@ try {
   `, [LIMIT]);
   selected = rows.length;
 
-  for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
-    const batch = rows.slice(offset, offset + BATCH_SIZE);
-    try {
-      const byRef = await fetchByReferences(batch);
-      for (const item of batch) {
-        const sourceId = Number(item.input.source_application_id);
-        const expectedAuthority = SOURCE_AUTHORITY_BY_CODE.get(item.input.local_authority_code);
-        if (!expectedAuthority) throw new Error(`Unknown source authority ${item.input.local_authority_code}`);
-        const attrs = byRef.get(sourceKey(expectedAuthority, item.input.reference));
+  const rowsByAuthority = new Map();
+  for (const item of rows) {
+    const authorityCode = item.input?.local_authority_code;
+    const authorityRows = rowsByAuthority.get(authorityCode) || [];
+    authorityRows.push(item);
+    rowsByAuthority.set(authorityCode, authorityRows);
+  }
 
-        if (!attrs) {
-          await client.query(`
-            update work_items
-            set status='completed',
-                result=$2::jsonb,
-                applied_at=now(),
-                completed_at=now(),
-                last_error=null,
-                updated_at=now()
-            where id=$1
-          `, [item.id, JSON.stringify({
-            ok:true, found:false, source_application_id:sourceId,
-            change_detected:false, checked_at:new Date().toISOString()
-          })]);
-          missing += 1;
-          continue;
-        }
-
-        const baseResult={ ok:true, found:true, matched_by:'reference', attributes:attrs };
-        const sourceSignature=activeExactSignature(baseResult);
-        const previousSignature=item.last_applied_signature || null;
-        const unchanged=Boolean(sourceSignature && previousSignature && sourceSignature===previousSignature);
-        const checkedAt=new Date().toISOString();
-
-        await client.query(`
-          update work_items
-          set status='completed',
-              result=$2::jsonb,
-              applied_at=case when $3 then now() else null end,
-              completed_at=now(),
-              last_error=null,
-              updated_at=now()
-          where id=$1
-        `, [item.id, JSON.stringify({
-          ...baseResult,
-          source_signature:sourceSignature,
-          change_detected:!unchanged,
-          checked_at:checkedAt
-        }), unchanged]);
-
-        const currentSourceId = Number(attrs.OBJECTID);
-        await client.query(`
-          insert into source_sync_state(
-            job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at
-          )
-          values(
-            'active_planning_exact',
-            $1,
-            $2::timestamptz,
-            case when $3 then $2::timestamptz else null::timestamptz end,
-            jsonb_build_object('source_application_id',$4::bigint),
-            now()
-          )
-          on conflict(job_family,application_key) do update
-          set last_checked_at=excluded.last_checked_at,
-              last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
-              metadata=coalesce(source_sync_state.metadata,'{}'::jsonb) || excluded.metadata,
-              updated_at=now()
-        `,[
-          String(item.input.application_id),
-          checkedAt,
-          !unchanged,
-          Number.isInteger(currentSourceId) ? currentSourceId : null
-        ]);
-
-        completed += 1;
-        referenceFallback += 1;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const pendingIds = batch.map((item) => item.id);
+  for (const [authorityCode, authorityRows] of rowsByAuthority) {
+    const expectedAuthority = SOURCE_AUTHORITY_BY_CODE.get(authorityCode);
+    if (!expectedAuthority) {
+      const ids = authorityRows.map((item) => item.id);
       const deferredRows = await client.query(`
         update work_items
         set attempts=attempts+1,
             last_error=$2,
-            available_at=now() + interval '30 minutes',
+            available_at=now() + interval '6 hours',
             updated_at=now()
         where id = any($1::bigint[])
           and status='pending'
           and applied_at is null
         returning id
-      `, [pendingIds, message.slice(0,500)]);
+      `, [ids, `Unknown source authority ${authorityCode}`]);
       failed += deferredRows.rowCount || 0;
-      console.warn(JSON.stringify({
-        phase:'batch_deferred',
-        batch_size:batch.length,
-        deferred:deferredRows.rowCount || 0,
-        error:message.slice(0,200)
-      }));
+      continue;
+    }
+
+    for (let offset = 0; offset < authorityRows.length; offset += BATCH_SIZE) {
+      const batch = authorityRows.slice(offset, offset + BATCH_SIZE);
+      try {
+        const byRef = await fetchAuthorityReferences(authorityCode, batch);
+
+        for (const item of batch) {
+          const sourceId = Number(item.input.source_application_id);
+          const attrs = byRef.get(sourceKey(expectedAuthority, item.input.reference));
+
+          if (!attrs) {
+            await client.query(`
+              update work_items
+              set attempts=attempts+1,
+                  last_error='source_reference_not_found',
+                  available_at=now() + interval '6 hours',
+                  updated_at=now()
+              where id=$1
+                and status='pending'
+                and applied_at is null
+            `, [item.id]);
+            missing += 1;
+            continue;
+          }
+
+          const baseResult={ ok:true, found:true, matched_by:'authority_reference', attributes:attrs };
+          const sourceSignature=activeExactSignature(baseResult);
+          const previousSignature=item.last_applied_signature || null;
+          const unchanged=Boolean(sourceSignature && previousSignature && sourceSignature===previousSignature);
+          const checkedAt=new Date().toISOString();
+
+          await client.query(`
+            update work_items
+            set status='completed',
+                result=$2::jsonb,
+                applied_at=case when $3 then now() else null end,
+                completed_at=now(),
+                last_error=null,
+                updated_at=now()
+            where id=$1
+          `, [item.id, JSON.stringify({
+            ...baseResult,
+            source_signature:sourceSignature,
+            change_detected:!unchanged,
+            checked_at:checkedAt
+          }), unchanged]);
+
+          const currentSourceId = Number(attrs.OBJECTID);
+          await client.query(`
+            insert into source_sync_state(
+              job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at
+            )
+            values(
+              'active_planning_exact',
+              $1,
+              $2::timestamptz,
+              case when $3 then $2::timestamptz else null::timestamptz end,
+              jsonb_build_object('source_application_id',$4::bigint),
+              now()
+            )
+            on conflict(job_family,application_key) do update
+            set last_checked_at=excluded.last_checked_at,
+                last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
+                metadata=coalesce(source_sync_state.metadata,'{}'::jsonb) || excluded.metadata,
+                updated_at=now()
+          `,[
+            String(item.input.application_id),
+            checkedAt,
+            !unchanged,
+            Number.isInteger(currentSourceId) ? currentSourceId : null
+          ]);
+
+          completed += 1;
+          referenceFallback += 1;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const pendingIds = batch.map((item) => item.id);
+        const deferredRows = await client.query(`
+          update work_items
+          set attempts=attempts+1,
+              last_error=$2,
+              available_at=now() + interval '30 minutes',
+              updated_at=now()
+          where id = any($1::bigint[])
+            and status='pending'
+            and applied_at is null
+          returning id
+        `, [pendingIds, message.slice(0,500)]);
+        failed += deferredRows.rowCount || 0;
+        console.warn(JSON.stringify({
+          phase:'batch_deferred',
+          authority:authorityCode,
+          batch_size:batch.length,
+          deferred:deferredRows.rowCount || 0,
+          error:message.slice(0,200)
+        }));
+      }
     }
   }
 
