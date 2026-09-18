@@ -57,7 +57,9 @@ let selected = 0, completed = 0, missing = 0, deferred = 0;
 try {
   const { rows } = await client.query(`
     select i.id,i.input,
-           s.last_applied_signature
+           case when s.metadata->>'signature_version'='agile-v2'
+                then coalesce(s.metadata->>'last_seen_source_signature',s.last_applied_signature)
+                else null end as previous_source_signature
     from work_items i
     left join source_sync_state s
       on s.job_family='active_planning_agile_detail'
@@ -82,8 +84,11 @@ try {
       const result = await fetchDetail(item.input, config);
       const baseResult={ ok:true, ...result };
       const sourceSignature=activeAgileSignature(baseResult);
-      const previousSignature=item.last_applied_signature || null;
-      const unchanged=Boolean(sourceSignature && previousSignature && sourceSignature===previousSignature);
+      const previousSignature=item.previous_source_signature || null;
+      const hasBaseline=Boolean(previousSignature);
+      const unchanged=Boolean(sourceSignature && hasBaseline && sourceSignature===previousSignature);
+      const baselineMissing=Boolean(result.found && sourceSignature && !hasBaseline);
+      const changeDetected=Boolean(result.found && sourceSignature && hasBaseline && sourceSignature!==previousSignature);
       const nothingToApply=!result.found || unchanged;
       const checkedAt=new Date().toISOString();
       await client.query(`
@@ -99,17 +104,32 @@ try {
       `, [item.id, JSON.stringify({
         ...baseResult,
         source_signature:sourceSignature,
-        change_detected:result.found ? !unchanged : false,
+        change_detected:changeDetected,
+        baseline_missing:baselineMissing,
+        requires_prod_baseline_validation:baselineMissing,
         checked_at:checkedAt
       }), nothingToApply]);
       await client.query(`
         insert into source_sync_state(job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at)
-        values('active_planning_agile_detail',$1,$2,case when $3 then $2 else null end,'{}'::jsonb,now())
+        values(
+          'active_planning_agile_detail',
+          $1,
+          $2::timestamptz,
+          case when $3 then $2::timestamptz else null::timestamptz end,
+          case when $4::text is null then '{}'::jsonb
+               else jsonb_build_object('signature_version','agile-v2','last_seen_source_signature',$4::text)
+                    || case when $5 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
+                            when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
+                            else '{}'::jsonb end
+          end,
+          now()
+        )
         on conflict(job_family,application_key) do update
         set last_checked_at=excluded.last_checked_at,
             last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
+            metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
             updated_at=now()
-      `,[String(item.input.application_id),checkedAt,result.found && !unchanged]);
+      `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing]);
       if (result.found) completed += 1;
       else missing += 1;
     } catch (error) {
