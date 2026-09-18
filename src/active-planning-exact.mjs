@@ -163,40 +163,49 @@ try {
 
           if (!attrs) {
             if (Number(item.attempts || 0) >= 2) {
-              const checkedAt = new Date().toISOString();
-              await client.query(`
-                update work_items
-                set status='completed',
-                    result=$2::jsonb,
-                    applied_at=now(),
-                    completed_at=now(),
-                    attempts=attempts+1,
-                    last_error=null,
-                    updated_at=now()
-                where id=$1
-                  and status='pending'
-                  and applied_at is null
-              `, [item.id, JSON.stringify({
-                ok:true,
-                found:false,
-                change_detected:false,
-                source_check_failed:true,
-                terminal_source_miss:true,
-                reason:'source_reference_not_found_after_retries',
-                checked_at:checkedAt
-              })]);
-              await client.query(`
-                insert into source_sync_state(job_family,application_key,last_checked_at,metadata,updated_at)
-                values(
-                  'active_planning_exact',$1,$2::timestamptz,
-                  jsonb_build_object('last_source_status','missing','last_source_error','source_reference_not_found_after_retries'),
-                  now()
-                )
-                on conflict(job_family,application_key) do update
-                set last_checked_at=excluded.last_checked_at,
-                    metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
-                    updated_at=now()
-              `, [String(item.input.application_id),checkedAt]);
+              await client.query('begin');
+              try {
+  
+                const checkedAt = new Date().toISOString();
+                await client.query(`
+                  update work_items
+                  set status='completed',
+                      result=$2::jsonb,
+                      applied_at=now(),
+                      completed_at=now(),
+                      attempts=attempts+1,
+                      last_error=null,
+                      updated_at=now()
+                  where id=$1
+                    and status='pending'
+                    and applied_at is null
+                `, [item.id, JSON.stringify({
+                  ok:true,
+                  found:false,
+                  change_detected:false,
+                  source_check_failed:true,
+                  terminal_source_miss:true,
+                  reason:'source_reference_not_found_after_retries',
+                  checked_at:checkedAt
+                })]);
+                await client.query(`
+                  insert into source_sync_state(job_family,application_key,last_checked_at,metadata,updated_at)
+                  values(
+                    'active_planning_exact',$1,$2::timestamptz,
+                    jsonb_build_object('last_source_status','missing','last_source_error','source_reference_not_found_after_retries'),
+                    now()
+                  )
+                  on conflict(job_family,application_key) do update
+                  set last_checked_at=excluded.last_checked_at,
+                      metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
+                      updated_at=now()
+                `, [String(item.input.application_id),checkedAt]);
+  
+                await client.query('commit');
+              } catch (stateError) {
+                await client.query('rollback').catch(() => {});
+                throw stateError;
+              }
             } else {
               await client.query(`
                 update work_items
@@ -222,60 +231,68 @@ try {
           const changeDetected=Boolean(sourceSignature && hasBaseline && sourceSignature!==previousSignature);
           const checkedAt=new Date().toISOString();
 
-          await client.query(`
-            update work_items
-            set status='completed',
-                result=$2::jsonb,
-                applied_at=case when $3 then now() else null end,
-                completed_at=now(),
-                last_error=null,
-                updated_at=now()
-            where id=$1
-          `, [item.id, JSON.stringify({
-            ...baseResult,
-            source_signature:sourceSignature,
-            change_detected:changeDetected,
-            baseline_missing:baselineMissing,
-            requires_prod_baseline_validation:baselineMissing,
-            checked_at:checkedAt
-          }), unchanged]);
-
-          const currentSourceId = Number(attrs.OBJECTID);
-          await client.query(`
-            insert into source_sync_state(
-              job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at
-            )
-            values(
-              'active_planning_exact',
-              $1,
-              $2::timestamptz,
-              case when $3 then $2::timestamptz else null::timestamptz end,
-              jsonb_build_object(
-                'source_application_id',$4::bigint,
-                'signature_version','exact-v2',
-                'last_seen_source_signature',$5::text,
-                'last_source_status','found',
-                'last_source_error',null
+          await client.query('begin');
+          try {
+            await client.query(`
+              update work_items
+              set status='completed',
+                  result=$2::jsonb,
+                  applied_at=case when $3 then now() else null end,
+                  completed_at=now(),
+                  last_error=null,
+                  updated_at=now()
+              where id=$1
+            `, [item.id, JSON.stringify({
+              ...baseResult,
+              source_signature:sourceSignature,
+              change_detected:changeDetected,
+              baseline_missing:baselineMissing,
+              requires_prod_baseline_validation:baselineMissing,
+              checked_at:checkedAt
+            }), unchanged]);
+  
+            const currentSourceId = Number(attrs.OBJECTID);
+            await client.query(`
+              insert into source_sync_state(
+                job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at
               )
-              || case when $6 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
-                      when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
-                      else '{}'::jsonb end,
-              now()
-            )
-            on conflict(job_family,application_key) do update
-            set last_checked_at=excluded.last_checked_at,
-                last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
-                metadata=coalesce(source_sync_state.metadata,'{}'::jsonb) || excluded.metadata,
-                updated_at=now()
-          `,[
-            String(item.input.application_id),
-            checkedAt,
-            changeDetected,
-            Number.isInteger(currentSourceId) ? currentSourceId : null,
-            sourceSignature,
-            baselineMissing
-          ]);
-
+              values(
+                'active_planning_exact',
+                $1,
+                $2::timestamptz,
+                case when $3 then $2::timestamptz else null::timestamptz end,
+                jsonb_build_object(
+                  'source_application_id',$4::bigint,
+                  'signature_version','exact-v2',
+                  'last_seen_source_signature',$5::text,
+                  'last_source_status','found',
+                  'last_source_error',null
+                )
+                || case when $6 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
+                        when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
+                        else '{}'::jsonb end,
+                now()
+              )
+              on conflict(job_family,application_key) do update
+              set last_checked_at=excluded.last_checked_at,
+                  last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
+                  metadata=coalesce(source_sync_state.metadata,'{}'::jsonb) || excluded.metadata,
+                  updated_at=now()
+            `,[
+              String(item.input.application_id),
+              checkedAt,
+              changeDetected,
+              Number.isInteger(currentSourceId) ? currentSourceId : null,
+              sourceSignature,
+              baselineMissing
+            ]);
+  
+  
+            await client.query('commit');
+          } catch (stateError) {
+            await client.query('rollback').catch(() => {});
+            throw stateError;
+          }
           completed += 1;
           referenceFallback += 1;
         }
