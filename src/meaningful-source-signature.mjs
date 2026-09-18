@@ -17,7 +17,7 @@ function pick(source, fields) {
 }
 
 const ACTIVE_EXACT_FIELDS = [
-  'OBJECTID','ApplicationNumber','ApplicationType','DevelopmentDescription','DevelopmentAddress',
+  'ApplicationNumber','ApplicationType','DevelopmentDescription','DevelopmentAddress',
   'DevelopmentPostcode','ApplicantForename','ApplicantSurname','ApplicationStatus','Decision',
   'ReceivedDate','DecisionDate','DecisionDueDate','GrantDate','ExpiryDate','FIRequestDate',
   'FIRecDate','WithdrawnDate','AppealSubmittedDate','AppealDecisionDate','ITMEasting','ITMNorthing',
