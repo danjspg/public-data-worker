@@ -116,8 +116,14 @@ try {
           $1,
           $2::timestamptz,
           case when $3 then $2::timestamptz else null::timestamptz end,
-          case when $4::text is null then '{}'::jsonb
-               else jsonb_build_object('signature_version','agile-v2','last_seen_source_signature',$4::text)
+          case when $4::text is null
+               then jsonb_build_object('last_source_status','missing','last_source_error',coalesce($6::text,'source_not_found'))
+               else jsonb_build_object(
+                      'signature_version','agile-v2',
+                      'last_seen_source_signature',$4::text,
+                      'last_source_status','found',
+                      'last_source_error',null
+                    )
                     || case when $5 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
                             when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
                             else '{}'::jsonb end
@@ -129,7 +135,7 @@ try {
             last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
             metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
             updated_at=now()
-      `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing]);
+      `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing,result.reason || null]);
       if (result.found) completed += 1;
       else missing += 1;
     } catch (error) {
