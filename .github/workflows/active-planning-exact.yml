@@ -36,6 +36,6 @@ jobs:
       - name: Process active Planning source checks
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          ACTIVE_PLANNING_WORKER_LIMIT: "20000"
+          ACTIVE_PLANNING_WORKER_LIMIT: ${{ github.event_name == 'push' && '300' || '5000' }}
           ACTIVE_PLANNING_SOURCE_BATCH: "150"
         run: npm run work:active-planning
