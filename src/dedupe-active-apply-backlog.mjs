@@ -35,7 +35,7 @@ try{
         insert into source_sync_state(
           job_family,application_key,last_applied_signature,last_applied_at,last_checked_at,metadata,updated_at
         )
-        values($1,$2,$3,$4,$4,jsonb_build_object('signature_version',$5),now())
+        values($1,$2,$3,$4,$4,jsonb_build_object('signature_version',$5::text),now())
         on conflict(job_family,application_key) do update
         set last_applied_signature=excluded.last_applied_signature,
             last_applied_at=greatest(source_sync_state.last_applied_at,excluded.last_applied_at),
