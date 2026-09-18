@@ -9,8 +9,8 @@ const client=new Client({connectionString,ssl:{rejectUnauthorized:false}});
 await client.connect();
 
 const configs=[
-  {jobType:'active_planning_exact',signature:activeExactSignature},
-  {jobType:'active_planning_agile_detail',signature:activeAgileSignature},
+  {jobType:'active_planning_exact',signature:activeExactSignature,version:'exact-v2'},
+  {jobType:'active_planning_agile_detail',signature:activeAgileSignature,version:'agile-v2'},
 ];
 const report={};
 try{
@@ -33,15 +33,16 @@ try{
       if(!signature||!row.application_key)continue;
       await client.query(`
         insert into source_sync_state(
-          job_family,application_key,last_applied_signature,last_applied_at,last_checked_at,updated_at
+          job_family,application_key,last_applied_signature,last_applied_at,last_checked_at,metadata,updated_at
         )
-        values($1,$2,$3,$4,$4,now())
+        values($1,$2,$3,$4,$4,jsonb_build_object('signature_version',$5),now())
         on conflict(job_family,application_key) do update
         set last_applied_signature=excluded.last_applied_signature,
             last_applied_at=greatest(source_sync_state.last_applied_at,excluded.last_applied_at),
             last_checked_at=greatest(source_sync_state.last_checked_at,excluded.last_checked_at),
+            metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
             updated_at=now()
-      `,[config.jobType,row.application_key,signature,row.applied_at]);
+      `,[config.jobType,row.application_key,signature,row.applied_at,config.version]);
       baselinesSeeded++;
     }
 
@@ -64,13 +65,6 @@ try{
       const previous=item.last_applied_signature || null;
       if(!current){
         missing++;
-        await client.query(`
-          update work_items
-          set result=coalesce(result,'{}'::jsonb) || $2::jsonb,
-              applied_at=now(),last_error=null,updated_at=now()
-          where id=$1 and applied_at is null
-        `,[item.id,JSON.stringify({change_detected:false,checked_at:new Date().toISOString(),dedupe_reason:'no_source_record'})]);
-        consumed++;
         continue;
       }
       if(!previous){noBaseline++;continue;}
