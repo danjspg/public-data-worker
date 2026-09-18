@@ -111,7 +111,7 @@ let selected = 0, completed = 0, referenceFallback = 0, missing = 0, failed = 0;
 try {
   const { rows } = await client.query(`
     select i.id, i.input,
-           case when s.metadata->>'signature_version'='exact-v2' then s.last_applied_signature else null end as last_applied_signature
+           case when s.metadata->>'signature_version'='exact-v2' then coalesce(s.metadata->>'last_seen_source_signature',s.last_applied_signature) else null end as previous_source_signature
     from work_items i
     left join source_sync_state s
       on s.job_family='active_planning_exact'
@@ -178,7 +178,7 @@ try {
 
           const baseResult={ ok:true, found:true, matched_by:'authority_reference', attributes:attrs };
           const sourceSignature=activeExactSignature(baseResult);
-          const previousSignature=item.last_applied_signature || null;
+          const previousSignature=item.previous_source_signature || null;
           const unchanged=Boolean(sourceSignature && previousSignature && sourceSignature===previousSignature);
           const checkedAt=new Date().toISOString();
 
@@ -208,7 +208,7 @@ try {
               $1,
               $2::timestamptz,
               case when $3 then $2::timestamptz else null::timestamptz end,
-              jsonb_build_object('source_application_id',$4::bigint),
+              jsonb_build_object('source_application_id',$4::bigint,'signature_version','exact-v2','last_seen_source_signature',$5::text),
               now()
             )
             on conflict(job_family,application_key) do update
@@ -220,7 +220,8 @@ try {
             String(item.input.application_id),
             checkedAt,
             !unchanged,
-            Number.isInteger(currentSourceId) ? currentSourceId : null
+            Number.isInteger(currentSourceId) ? currentSourceId : null,
+            sourceSignature
           ]);
 
           completed += 1;
