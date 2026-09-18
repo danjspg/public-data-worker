@@ -110,7 +110,7 @@ await client.connect();
 let selected = 0, completed = 0, referenceFallback = 0, missing = 0, failed = 0;
 try {
   const { rows } = await client.query(`
-    select i.id, i.input,
+    select i.id, i.input, i.attempts,
            case when s.metadata->>'signature_version'='exact-v2' then coalesce(s.metadata->>'last_seen_source_signature',s.last_applied_signature) else null end as previous_source_signature
     from work_items i
     left join source_sync_state s
@@ -162,16 +162,41 @@ try {
           const attrs = byRef.get(sourceKey(expectedAuthority, item.input.reference));
 
           if (!attrs) {
-            await client.query(`
-              update work_items
-              set attempts=attempts+1,
-                  last_error='source_reference_not_found',
-                  available_at=now() + interval '6 hours',
-                  updated_at=now()
-              where id=$1
-                and status='pending'
-                and applied_at is null
-            `, [item.id]);
+            if (Number(item.attempts || 0) >= 2) {
+              const checkedAt = new Date().toISOString();
+              await client.query(`
+                update work_items
+                set status='completed',
+                    result=$2::jsonb,
+                    applied_at=now(),
+                    completed_at=now(),
+                    attempts=attempts+1,
+                    last_error=null,
+                    updated_at=now()
+                where id=$1
+                  and status='pending'
+                  and applied_at is null
+              `, [item.id, JSON.stringify({
+                ok:true,
+                found:false,
+                change_detected:false,
+                source_check_failed:true,
+                terminal_source_miss:true,
+                reason:'source_reference_not_found_after_retries',
+                checked_at:checkedAt
+              })]);
+            } else {
+              await client.query(`
+                update work_items
+                set attempts=attempts+1,
+                    last_error='source_reference_not_found',
+                    available_at=now() + interval '6 hours',
+                    updated_at=now()
+                where id=$1
+                  and status='pending'
+                  and applied_at is null
+              `, [item.id]);
+            }
             missing += 1;
             continue;
           }
@@ -179,7 +204,10 @@ try {
           const baseResult={ ok:true, found:true, matched_by:'authority_reference', attributes:attrs };
           const sourceSignature=activeExactSignature(baseResult);
           const previousSignature=item.previous_source_signature || null;
-          const unchanged=Boolean(sourceSignature && previousSignature && sourceSignature===previousSignature);
+          const hasBaseline=Boolean(previousSignature);
+          const unchanged=Boolean(sourceSignature && hasBaseline && sourceSignature===previousSignature);
+          const baselineMissing=Boolean(sourceSignature && !hasBaseline);
+          const changeDetected=Boolean(sourceSignature && hasBaseline && sourceSignature!==previousSignature);
           const checkedAt=new Date().toISOString();
 
           await client.query(`
@@ -194,7 +222,9 @@ try {
           `, [item.id, JSON.stringify({
             ...baseResult,
             source_signature:sourceSignature,
-            change_detected:!unchanged,
+            change_detected:changeDetected,
+            baseline_missing:baselineMissing,
+            requires_prod_baseline_validation:baselineMissing,
             checked_at:checkedAt
           }), unchanged]);
 
@@ -208,7 +238,14 @@ try {
               $1,
               $2::timestamptz,
               case when $3 then $2::timestamptz else null::timestamptz end,
-              jsonb_build_object('source_application_id',$4::bigint,'signature_version','exact-v2','last_seen_source_signature',$5::text),
+              jsonb_build_object(
+                'source_application_id',$4::bigint,
+                'signature_version','exact-v2',
+                'last_seen_source_signature',$5::text
+              )
+              || case when $6 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
+                      when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
+                      else '{}'::jsonb end,
               now()
             )
             on conflict(job_family,application_key) do update
@@ -219,9 +256,10 @@ try {
           `,[
             String(item.input.application_id),
             checkedAt,
-            !unchanged,
+            changeDetected,
             Number.isInteger(currentSourceId) ? currentSourceId : null,
-            sourceSignature
+            sourceSignature,
+            baselineMissing
           ]);
 
           completed += 1;
