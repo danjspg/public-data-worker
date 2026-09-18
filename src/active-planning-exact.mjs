@@ -185,6 +185,18 @@ try {
                 reason:'source_reference_not_found_after_retries',
                 checked_at:checkedAt
               })]);
+              await client.query(`
+                insert into source_sync_state(job_family,application_key,last_checked_at,metadata,updated_at)
+                values(
+                  'active_planning_exact',$1,$2::timestamptz,
+                  jsonb_build_object('last_source_status','missing','last_source_error','source_reference_not_found_after_retries'),
+                  now()
+                )
+                on conflict(job_family,application_key) do update
+                set last_checked_at=excluded.last_checked_at,
+                    metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
+                    updated_at=now()
+              `, [String(item.input.application_id),checkedAt]);
             } else {
               await client.query(`
                 update work_items
@@ -241,7 +253,9 @@ try {
               jsonb_build_object(
                 'source_application_id',$4::bigint,
                 'signature_version','exact-v2',
-                'last_seen_source_signature',$5::text
+                'last_seen_source_signature',$5::text,
+                'last_source_status','found',
+                'last_source_error',null
               )
               || case when $6 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
                       when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
