@@ -53,7 +53,17 @@ function defaultEnd() {
   return d
 }
 function compactRaw(raw) {
-  return Object.fromEntries(fields.flatMap((key) => raw?.[key] == null ? [] : [[key, raw[key]]]))
+  const keys = [
+    'publication-number',
+    'publication-date',
+    'notice-type',
+    'procedure-identifier',
+    'buyer-country',
+  ]
+  return {
+    _historical_compact: true,
+    ...Object.fromEntries(keys.flatMap((key) => raw?.[key] == null ? [] : [[key, raw[key]]])),
+  }
 }
 async function setJob(client, cursor, status, error = null, summary = null) {
   await client.query(`
