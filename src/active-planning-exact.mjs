@@ -111,7 +111,7 @@ let selected = 0, completed = 0, referenceFallback = 0, missing = 0, failed = 0;
 try {
   const { rows } = await client.query(`
     select i.id, i.input,
-           s.last_applied_signature
+           case when s.metadata->>'signature_version'='exact-v2' then s.last_applied_signature else null end as last_applied_signature
     from work_items i
     left join source_sync_state s
       on s.job_family='active_planning_exact'
