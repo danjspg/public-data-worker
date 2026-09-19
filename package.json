@@ -24,6 +24,7 @@
     "work:commercial-classifier": "node src/commercial-classifier.mjs"
   },
   "dependencies": {
-    "pg": "^8.13.3"
+    "pg": "^8.13.3",
+    "@supabase/supabase-js": "^2.103.0"
   }
 }
