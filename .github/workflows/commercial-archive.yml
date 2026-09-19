@@ -1,0 +1,64 @@
+name: Public commercial archive preflight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/commercial-archive.yml"
+      - "src/archive-commercial-source-snapshots.mjs"
+      - "src/archive-commercial-model-artifacts.mjs"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check archive credentials
+        id: credentials
+        shell: bash
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -n "$WORKER_DATABASE_URL" ] && [ -n "$NEXT_PUBLIC_SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "Commercial archive credentials are configured."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Commercial archive credentials are not fully configured; leaving the private archive workflow authoritative."
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.credentials.outputs.configured == 'true'
+
+      - uses: actions/setup-node@v7
+        if: steps.credentials.outputs.configured == 'true'
+        with:
+          node-version: 22
+
+      - if: steps.credentials.outputs.configured == 'true'
+        run: npm install --no-audit --no-fund
+
+      - name: Archive worker source snapshots
+        if: steps.credentials.outputs.configured == 'true'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SOURCE_SNAPSHOT_ARCHIVE_LIMIT: "1000"
+        run: node src/archive-commercial-source-snapshots.mjs
+
+      - name: Archive immutable model artifacts
+        if: steps.credentials.outputs.configured == 'true'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MODEL_ARTIFACT_ARCHIVE_LIMIT: "2000"
+        run: node src/archive-commercial-model-artifacts.mjs
