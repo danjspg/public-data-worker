@@ -2,7 +2,8 @@ name: Public worker maintenance
 
 on:
   schedule:
-    - cron: '47 */6 * * *'
+    - cron: '47 0 * * *'
+    - cron: '47 6,12,18 * * *'
   workflow_dispatch:
 
 permissions:
@@ -23,3 +24,13 @@ jobs:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           STALE_LEASE_MINUTES: '120'
         run: npm run work:maintenance
+
+      - name: Compact and prune applied worker history
+        if: github.event_name == 'schedule' && github.event.schedule == '47 0 * * *'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          WORKER_COMPACT_AFTER_HOURS: '6'
+          WORKER_DELETE_RECURRING_AFTER_DAYS: '1'
+          WORKER_PRUNE_BATCH_SIZE: '2000'
+          WORKER_PRUNE_MAX_ROWS: '100000'
+        run: npm run work:prune-history
