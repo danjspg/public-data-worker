@@ -20,6 +20,7 @@
     "work:planning-historical-discovery": "node src/planning-historical-discovery.mjs",
     "work:planning-historical-exact": "node src/planning-historical-exact.mjs",
     "work:maintenance": "node src/worker-maintenance.mjs",
+    "work:prune-history": "node src/prune-worker-history.mjs",
     "work:commercial-classifier": "node src/commercial-classifier.mjs"
   },
   "dependencies": {
