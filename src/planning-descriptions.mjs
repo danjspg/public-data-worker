@@ -111,6 +111,22 @@ try {
       }
     }
   }
-  console.log(JSON.stringify({selected:rows.length,completed,deferred,failed},null,2));
+  const { rows: failureReasonRows } = await client.query(`
+    select coalesce(nullif(last_error,''),'unknown') as reason, count(*)::int as count
+    from work_items
+    where job_type='planning_description'
+      and status='failed'
+      and applied_at is null
+    group by 1
+    order by count(*) desc, reason
+    limit 20
+  `);
+  console.log(JSON.stringify({
+    selected:rows.length,
+    completed,
+    deferred,
+    failed,
+    failureReasons: failureReasonRows,
+  },null,2));
   if(failed>Math.max(25,Math.floor(rows.length*0.1))) process.exitCode=1;
 } finally { await client.end().catch(()=>{}); }
