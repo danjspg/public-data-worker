@@ -9,7 +9,8 @@ on:
       - "src/retry-transient.mjs"
       - "package.json"
   schedule:
-    # Temporary catch-up cadence; return to maintenance cadence once the finite backlog is cleared.\n    - cron: "25,55 * * * *"
+    # Temporary catch-up cadence; return to maintenance cadence once the finite backlog is cleared.
+    - cron: "25,55 * * * *"
   workflow_dispatch:
 
 permissions:
