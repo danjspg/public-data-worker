@@ -3,7 +3,7 @@ import pg from 'pg';
 const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
 if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
-const LIMIT = Math.max(1, Math.min(Number(process.env.DESCRIPTION_WORKER_LIMIT || 400), 400));
+const LIMIT = Math.max(1, Math.min(Number(process.env.DESCRIPTION_WORKER_LIMIT || 400), 800));
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
 const AGILE_DETAIL = 'https://planningapi.agileapplications.ie/api/application';
 const AGILE = {
