@@ -4,6 +4,9 @@ const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
 if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 const LIMIT = Math.max(1, Math.min(Number(process.env.DESCRIPTION_WORKER_LIMIT || 400), 800));
+const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPTION_WORKER_MAX_RUNTIME_MS || 25 * 60_000), 30 * 60_000));
+const startedAt = Date.now();
+const timeRemaining = () => Date.now() - startedAt < MAX_RUNTIME_MS;
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
 const AGILE_DETAIL = 'https://planningapi.agileapplications.ie/api/application';
 const AGILE = {
@@ -61,15 +64,17 @@ async function failItem(client, itemId, message) {
 
 const client = new Client({ connectionString, ssl:{ rejectUnauthorized:false } });
 await client.connect();
-let completed=0, deferred=0, failed=0;
+let completed=0, deferred=0, failed=0, stoppedForTime=false;
 try {
   const { rows } = await client.query(`select id,input from work_items where job_type='planning_description' and status='pending' and applied_at is null and available_at<=now() order by id limit $1`, [LIMIT]);
   const groups = new Map();
   for (const item of rows) { const code=item.input.local_authority_code; const list=groups.get(code)||[]; list.push(item); groups.set(code,list); }
   for (const [code, items] of groups) {
+    if (!timeRemaining()) { stoppedForTime=true; break; }
     const agile=AGILE[code];
     if (agile) {
       for (const item of items) {
+        if (!timeRemaining()) { stoppedForTime=true; break; }
         try {
           const id=agileId(agile,item.input);
           if(!id) throw new Error('missing_source_application_id');
@@ -91,6 +96,7 @@ try {
       continue;
     }
     for (let offset=0; offset<items.length; offset+=50) {
+      if (!timeRemaining()) { stoppedForTime=true; break; }
       const batch=items.slice(offset,offset+50);
       const refs=batch.map(x=>`'${esc(x.input.reference)}'`).join(',');
       const ids=batch.map(x=>Number(x.input.source_application_id)).filter(Number.isInteger);
@@ -126,6 +132,8 @@ try {
     completed,
     deferred,
     failed,
+    stoppedForTime,
+    runtimeSeconds: Math.round((Date.now()-startedAt)/1000),
     failureReasons: failureReasonRows,
   },null,2));
   if(failed>Math.max(25,Math.floor(rows.length*0.1))) process.exitCode=1;
