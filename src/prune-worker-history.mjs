@@ -13,6 +13,7 @@ const recurringJobTypes = [
   'active_planning_exact',
   'active_planning_agile_detail',
   'active_planning_recent_range',
+  'planning_description',
   'eplan_active_lifecycle',
   'procurement_ogp_record',
   'procurement_ted_notice',
