@@ -10,7 +10,7 @@ on:
       - "package.json"
   schedule:
     # Temporary catch-up cadence; return to maintenance cadence once the finite backlog is cleared.
-    - cron: "25,55 * * * *"
+    - cron: "5,15,25,35,45,55 * * * *"
   workflow_dispatch:
 
 permissions:
