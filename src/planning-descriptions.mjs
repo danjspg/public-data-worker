@@ -22,7 +22,7 @@ const AGILE = {
 const SOURCE_NAMES = {
   DUBLINCITY:'Dublin City Council', SOUTHDUBLIN:'South Dublin County Council', KILDARE:'Kildare County Council',
   GALWAYCOCO:'Galway County Council', GALWAYCITY:'Galway City Council', MEATH:'Meath County Council', WICKLOW:'Wicklow County Council',
-  LIMERICK:'Limerick City and County Council', WATERFORD:'Waterford City and County Council', DONEGAL:'Donegal County Council',
+  LIMERICK:'Limerick County Council', WATERFORD:'Waterford City and County Council', DONEGAL:'Donegal County Council',
   TIPPERARY:'Tipperary County Council', KERRY:'Kerry County Council', MAYO:'Mayo County Council', CLARE:'Clare County Council',
   LOUTH:'Louth County Council', LAOIS:'Laois County Council', KILKENNY:'Kilkenny County Council', OFFALY:'Offaly County Council',
   CAVAN:'Cavan County Council', ROSCOMMON:'Roscommon County Council', WESTMEATH:'Westmeath County Council', MONAGHAN:'Monaghan County Council',
