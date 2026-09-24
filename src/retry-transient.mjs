@@ -11,17 +11,7 @@ try {
     set status = 'pending', available_at = now(), completed_at = null, updated_at = now()
     where applied_at is null
       and status = 'failed'
-      and (
-        last_error like 'HTTP 429%'
-        or last_error like 'HTTP 408%'
-        or last_error like 'HTTP 425%'
-        or last_error like 'HTTP 500%'
-        or last_error like 'HTTP 502%'
-        or last_error like 'HTTP 503%'
-        or last_error like 'HTTP 504%'
-        or last_error like '%AbortError%'
-        or last_error like '%Timeout%'
-      )
+      and coalesce(last_error,'') ~* '(HTTP (408|425|429|500|502|503|504)|timeout|abort|fetch failed|ECONN|socket|temporar|rate limit|too many)'
   `);
   console.log(JSON.stringify({ retried: result.rowCount }, null, 2));
 } finally {
