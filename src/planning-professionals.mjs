@@ -5,8 +5,10 @@ const connectionString = process.env.WORKER_DATABASE_URL;
 if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
 const AUTHORITY = String(process.env.PROFESSIONAL_AUTHORITY || '').toUpperCase();
-const LIMIT = Math.max(1, Math.min(Number(process.env.PROFESSIONAL_WORKER_LIMIT || 300), 500));
+const LIMIT = Math.max(1, Math.min(Number(process.env.PROFESSIONAL_WORKER_LIMIT || 300), 5000));
 const DELAY_MS = Math.max(350, Number(process.env.PROFESSIONAL_WORKER_DELAY_MS || 500));
+const MAX_RUNTIME_MS = Math.max(60000, Math.min(Number(process.env.PROFESSIONAL_WORKER_MAX_RUNTIME_MS || 1200000), 2700000));
+const STALE_LEASE_MINUTES = Math.max(15, Math.min(Number(process.env.PROFESSIONAL_STALE_LEASE_MINUTES || 60), 240));
 const EPLAN_BASE_URL = 'https://www.eplanning.ie';
 const EPLAN_AUTHORITIES = {
   CARLOW:'CarlowCC', CAVAN:'CavanCC', CLARE:'ClareCC', DONEGAL:'DonegalCC', GALWAYCOCO:'GalwayCC', GALWAYCITY:'GalwayCity',
@@ -20,6 +22,7 @@ const AGILE_AUTHORITIES = {
   DUBLINCITY:{ code:'DCC', tenant:'dublincity' }, DUBLINCC:{ code:'DCC', tenant:'dublincity' },
 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function htmlText(value) {
   return String(value || '').replace(/<br\s*\/?>/gi,' | ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ')
     .replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>')
@@ -65,6 +68,15 @@ function parseEplanAgent(html) {
   payload.identity_hints=identityHints(clean,payload);
   return [{ role:'agent', raw_name:clean, raw_name_normalized:normalized, confidence:100, source_payload:payload }];
 }
+function retryAfterMs(response) {
+  const value = response?.headers?.get?.('retry-after');
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, Math.min(seconds * 1000, 60000));
+  const when = Date.parse(value);
+  if (!Number.isFinite(when)) return null;
+  return Math.max(0, Math.min(when - Date.now(), 60000));
+}
 async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
   try { return await fetch(url, { ...options, signal: controller.signal }); } finally { clearTimeout(timer); }
@@ -75,7 +87,7 @@ async function fetchProfessional(authority, reference) {
     const params = new URLSearchParams({ reference:String(reference).trim() });
     try {
       const response = await fetchWithTimeout(`https://planningapi.agileapplications.ie/api/application/search?${params}`, { headers:{ 'User-Agent':'Public records data worker','x-client':cfg.code,'x-product':'CITIZENPORTAL','x-service':'PA' } });
-      if (!response.ok) return { ok:false, reason:`http_${response.status}`, source_family:'agile' };
+      if (!response.ok) return { ok:false, reason:`http_${response.status}`, source_family:'agile', retry_after_ms:response.status === 429 ? retryAfterMs(response) : null };
       const data = await response.json();
       const wanted = String(reference || '').replace(/\s+/g,'').toUpperCase();
       const row = (Array.isArray(data?.results) ? data.results : []).find((r) => String(r?.reference || '').replace(/\s+/g,'').toUpperCase() === wanted);
@@ -92,7 +104,7 @@ async function fetchProfessional(authority, reference) {
   try {
     const response = await fetchWithTimeout(url, { headers:{ 'User-Agent':'Public records data worker' } });
     if (response.status === 404) return { ok:false, reason:'not_found', source_family:'eplan', source_url:url };
-    if (!response.ok) return { ok:false, reason:`http_${response.status}`, source_family:'eplan', source_url:url };
+    if (!response.ok) return { ok:false, reason:`http_${response.status}`, source_family:'eplan', source_url:url, retry_after_ms:response.status === 429 ? retryAfterMs(response) : null };
     const professionals = parseEplanAgent(await response.text());
     return { ok:true, reason:professionals.length ? null : 'no_agent', source_family:'eplan', source_url:url, professionals };
   } catch (error) { return { ok:false, reason:'fetch_error', error:String(error), source_family:'eplan', source_url:url }; }
@@ -100,6 +112,20 @@ async function fetchProfessional(authority, reference) {
 
 const client = new Client({ connectionString, ssl:{ rejectUnauthorized:false } });
 await client.connect();
+
+async function recoverStaleLeases() {
+  const recovered = await client.query(`
+    update work_items
+    set status='pending', leased_at=null, available_at=now(),
+        last_error=coalesce(last_error,'stale worker lease recovered'), updated_at=now()
+    where job_type='planning_professional_backfill'
+      and status='running'
+      and leased_at is not null
+      and leased_at < now() - make_interval(mins => $1::int)
+    returning id
+  `,[STALE_LEASE_MINUTES]);
+  return recovered.rowCount;
+}
 
 async function promoteCommercialIntelligenceCandidates() {
   const params = [AUTHORITY, Math.min(1000, Math.max(LIMIT * 3, 300))];
@@ -164,8 +190,10 @@ async function promoteCommercialIntelligenceCandidates() {
   return { candidates:rows.length, inserted, reprioritized };
 }
 
-let completed = 0, deferred = 0;
+let completed = 0, deferred = 0, attempted = 0, rateLimited = 0, runtimeStopped = false;
+const startedAt = Date.now();
 try {
+  const recoveredStale = await recoverStaleLeases();
   const promoted = await promoteCommercialIntelligenceCandidates();
   const params = [LIMIT];
   let authorityClause = '';
@@ -180,18 +208,56 @@ try {
       id desc
     limit $1
   `, params);
-  for (const [index,item] of rows.entries()) {
+
+  for (const item of rows) {
+    if (Date.now() - startedAt >= MAX_RUNTIME_MS) {
+      runtimeStopped = true;
+      break;
+    }
+
     await client.query("update work_items set status='running', leased_at=now(), attempts=attempts+1, updated_at=now() where id=$1",[item.id]);
+    attempted += 1;
     const result = await fetchProfessional(String(item.input.local_authority_code || '').toUpperCase(), item.input.reference);
     const transient = !result.ok && (result.reason === 'fetch_error' || /^http_(408|425|429|500|502|503|504)$/.test(result.reason || ''));
     if (transient) {
-      await client.query("update work_items set status='pending',result=null,available_at=now()+interval '30 minutes',last_error=$2,completed_at=null,updated_at=now() where id=$1",[item.id,String(result.error || result.reason).slice(0,500)]);
+      await client.query("update work_items set status='pending',leased_at=null,result=null,available_at=now()+interval '30 minutes',last_error=$2,completed_at=null,updated_at=now() where id=$1",[item.id,String(result.error || result.reason).slice(0,500)]);
       deferred += 1;
     } else {
-      await client.query("update work_items set status='completed',result=$2::jsonb,completed_at=now(),last_error=null,updated_at=now() where id=$1",[item.id,JSON.stringify(result)]);
+      await client.query("update work_items set status='completed',leased_at=null,result=$2::jsonb,completed_at=now(),last_error=null,updated_at=now() where id=$1",[item.id,JSON.stringify(result)]);
       completed += 1;
     }
-    if (index < rows.length - 1) await sleep(DELAY_MS);
+
+    let pauseMs = DELAY_MS;
+    if (result.reason === 'http_429') {
+      rateLimited += 1;
+      pauseMs = Math.max(DELAY_MS, Number(result.retry_after_ms || 5000));
+    }
+    await sleep(Math.min(pauseMs, 60000));
   }
-  console.log(JSON.stringify({ authority:AUTHORITY || null, promoted, selected:rows.length, completed, deferred }, null, 2));
+
+  const queue = (await client.query(`
+    select
+      count(*) filter (where status='pending')::int as pending,
+      count(*) filter (where status='pending' and available_at<=now())::int as ready,
+      count(*) filter (where status='pending' and available_at>now())::int as deferred,
+      count(*) filter (where status='running')::int as running,
+      count(*) filter (where status='completed' and applied_at is null)::int as completed_waiting
+    from work_items
+    where job_type='planning_professional_backfill'
+      and applied_at is null
+  `)).rows[0] || {};
+
+  console.log(JSON.stringify({
+    authority:AUTHORITY || null,
+    recoveredStale,
+    promoted,
+    selected:rows.length,
+    attempted,
+    completed,
+    deferred,
+    rateLimited,
+    runtimeStopped,
+    runtimeSeconds:Math.round((Date.now()-startedAt)/1000),
+    queue,
+  }, null, 2));
 } finally { await client.end().catch(() => {}); }
