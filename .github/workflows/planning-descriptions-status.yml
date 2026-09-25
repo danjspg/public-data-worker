@@ -1,4 +1,4 @@
-name: "[PUBLIC] Planning description queue status"
+name: "[PUBLIC] Planning worker queue status"
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - name: Report planning description queue
+      - name: Report planning description and professional queues
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
         run: node src/planning-descriptions-status.mjs
