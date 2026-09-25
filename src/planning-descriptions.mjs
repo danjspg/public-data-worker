@@ -107,6 +107,62 @@ const selectedByAuthority = {};
 const completedByAuthority = {};
 
 try {
+  // Emit an immediate queue/source snapshot before doing any work. This makes source behaviour
+  // observable even when a long catch-up run is still in progress.
+  const { rows: startupBacklogRows } = await client.query(`
+    select status, count(*)::int as count
+    from work_items
+    where job_type='planning_description'
+      and applied_at is null
+    group by status
+    order by status
+  `);
+  const { rows: startupCompletionQualityRows } = await client.query(`
+    select
+      count(*)::int as completed_total,
+      count(*) filter (where coalesce(nullif(btrim(result->>'proposal'),''),'') <> '')::int as completed_with_proposal,
+      count(*) filter (where coalesce(nullif(btrim(result->>'proposal'),''),'') = '')::int as completed_without_proposal
+    from work_items
+    where job_type='planning_description'
+      and status='completed'
+      and applied_at is null
+  `);
+  const { rows: startupPendingReasonRows } = await client.query(`
+    select
+      coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
+      coalesce(nullif(last_error,''),'none') as reason,
+      count(*)::int as count
+    from work_items
+    where job_type='planning_description'
+      and status='pending'
+      and applied_at is null
+      and last_error is not null
+    group by 1,2
+    order by count(*) desc, authority, reason
+    limit 30
+  `);
+  const { rows: startupFailureRows } = await client.query(`
+    select
+      coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
+      coalesce(nullif(last_error,''),'unknown') as reason,
+      count(*)::int as count
+    from work_items
+    where job_type='planning_description'
+      and status='failed'
+      and applied_at is null
+    group by 1,2
+    order by count(*) desc, authority, reason
+    limit 30
+  `);
+  console.log(JSON.stringify({
+    startupDiagnostics:{
+      workerBacklog:startupBacklogRows,
+      completionQuality:startupCompletionQualityRows[0] || null,
+      pendingReasons:startupPendingReasonRows,
+      failuresByAuthority:startupFailureRows,
+    }
+  },null,2));
+
   while (timeRemaining()) {
     const { rows } = await client.query(`
       select id,input
