@@ -87,6 +87,69 @@ try {
     limit 50
   `);
 
+  const { rows: professionalSummaryRows } = await client.query(`
+    select
+      count(*) filter (where status='completed' and applied_at is null)::int as completed_waiting,
+      count(*) filter (
+        where status='completed' and applied_at is null and result->>'ok'='true'
+      )::int as source_resolved_waiting,
+      count(*) filter (
+        where status='completed' and applied_at is null
+          and jsonb_typeof(result->'professionals')='array'
+          and jsonb_array_length(result->'professionals')>0
+      )::int as applications_with_professionals_waiting,
+      coalesce(sum(
+        case
+          when status='completed' and applied_at is null and jsonb_typeof(result->'professionals')='array'
+            then jsonb_array_length(result->'professionals')
+          else 0
+        end
+      ),0)::int as professional_records_waiting,
+      count(*) filter (
+        where status='completed' and applied_at is null and result->>'reason'='no_agent'
+      )::int as no_agent_waiting,
+      count(*) filter (
+        where status='completed' and applied_at is null and result->>'ok'='false'
+      )::int as completed_negative_waiting,
+      count(*) filter (where status='pending' and applied_at is null)::int as pending,
+      count(*) filter (where status='running' and applied_at is null)::int as running,
+      count(*) filter (where status='failed' and applied_at is null)::int as failed
+    from work_items
+    where job_type='planning_professional_backfill'
+  `);
+
+  const { rows: agentRecordRows } = await client.query(`
+    select count(*)::int as agent_records_waiting
+    from work_items w
+    cross join lateral jsonb_array_elements(
+      case
+        when jsonb_typeof(w.result->'professionals')='array' then w.result->'professionals'
+        else '[]'::jsonb
+      end
+    ) p(value)
+    where w.job_type='planning_professional_backfill'
+      and w.status='completed'
+      and w.applied_at is null
+      and p.value->>'role'='agent'
+  `);
+
+  const { rows: professionalsByAuthorityRows } = await client.query(`
+    select
+      coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
+      count(*) filter (where status='completed' and applied_at is null)::int as completed_waiting,
+      count(*) filter (
+        where status='completed' and applied_at is null
+          and jsonb_typeof(result->'professionals')='array'
+          and jsonb_array_length(result->'professionals')>0
+      )::int as applications_with_professionals_waiting,
+      count(*) filter (where status='pending' and applied_at is null)::int as pending
+    from work_items
+    where job_type='planning_professional_backfill'
+    group by 1
+    having count(*) filter (where applied_at is null) > 0
+    order by applications_with_professionals_waiting desc, completed_waiting desc, authority
+  `);
+
   console.log(JSON.stringify({
     capturedAt:new Date().toISOString(),
     summary:summaryRows[0] || null,
@@ -94,6 +157,13 @@ try {
     pendingByAuthority:pendingByAuthorityRows,
     pendingReasons:pendingReasonRows,
     failuresByAuthority:failureRows,
+    professionals:{
+      summary:{
+        ...(professionalSummaryRows[0] || {}),
+        agent_records_waiting:agentRecordRows[0]?.agent_records_waiting || 0,
+      },
+      byAuthority:professionalsByAuthorityRows,
+    },
   },null,2));
 } finally {
   await client.end().catch(()=>{});
