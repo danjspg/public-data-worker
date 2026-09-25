@@ -7,8 +7,8 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 // Keep claims bounded, but keep taking fresh claims until the run-time budget is nearly exhausted.
 // This avoids the old 800-items-per-run ceiling while retaining a small working set.
 const CLAIM_LIMIT = Math.max(1, Math.min(Number(process.env.DESCRIPTION_WORKER_LIMIT || 400), 1000));
-const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPTION_WORKER_MAX_RUNTIME_MS || 25 * 60_000), 30 * 60_000));
-const AGILE_CONCURRENCY = Math.max(1, Math.min(Number(process.env.DESCRIPTION_AGILE_CONCURRENCY || 4), 8));
+const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPTION_WORKER_MAX_RUNTIME_MS || 120 * 60_000), 180 * 60_000));
+const AGILE_CONCURRENCY = Math.max(1, Math.min(Number(process.env.DESCRIPTION_AGILE_CONCURRENCY || 2), 8));
 const startedAt = Date.now();
 const timeRemaining = () => Date.now() - startedAt < MAX_RUNTIME_MS;
 
@@ -37,9 +37,20 @@ function isTransientMessage(message) {
   return /HTTP (408|425|429|500|502|503|504)|timeout|abort|fetch failed|ECONN|socket|temporar|rate limit|too many/i.test(String(message || ''));
 }
 
+function retryAfterMs(response) {
+  const raw = response.headers.get('retry-after');
+  if (!raw) return 0;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 60_000);
+  const when = Date.parse(raw);
+  if (!Number.isFinite(when)) return 0;
+  return Math.max(0, Math.min(when - Date.now(), 60_000));
+}
+
 async function fetchJson(url, headers={}) {
   let last;
   for (let attempt=1; attempt<=4; attempt++) {
+    let retryDelay = attempt * 750;
     try {
       const response = await fetch(url, {
         headers: { 'User-Agent':'Public records data worker', ...headers },
@@ -48,10 +59,11 @@ async function fetchJson(url, headers={}) {
       if (response.ok) return response.json();
       last = new Error(`HTTP ${response.status}`);
       if (![408,425,429,500,502,503,504].includes(response.status)) break;
+      if (response.status === 429) retryDelay = Math.max(retryDelay, retryAfterMs(response));
     } catch (error) {
       last = error;
     }
-    if (attempt<4) await sleep(attempt*750);
+    if (attempt<4) await sleep(retryDelay + Math.floor(Math.random()*250));
   }
   throw last || new Error('request failed');
 }
