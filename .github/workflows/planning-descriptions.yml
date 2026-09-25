@@ -23,7 +23,7 @@ concurrency:
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 135
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -42,4 +42,6 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           DESCRIPTION_WORKER_LIMIT: "800"
+          DESCRIPTION_WORKER_MAX_RUNTIME_MS: "7200000"
+          DESCRIPTION_AGILE_CONCURRENCY: "2"
         run: npm run work:planning-descriptions
