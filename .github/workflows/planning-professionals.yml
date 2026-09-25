@@ -6,7 +6,9 @@ on:
       - .github/workflows/planning-professionals.yml
       - src/planning-professionals.mjs
   schedule:
-    - cron: "25 */6 * * *"
+    # One bounded global worker every two hours. This replaces the previous
+    # 32-job authority matrix and keeps the queue draining with far fewer Actions.
+    - cron: "35 */2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -17,56 +19,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scrape:
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix:
-        authority:
-          - CARLOW
-          - CAVAN
-          - CLARE
-          - DONEGAL
-          - GALWAYCOCO
-          - GALWAYCITY
-          - KILDARE
-          - KILKENNY
-          - KERRY
-          - LAOIS
-          - LIMERICK
-          - LEITRIM
-          - LONGFORD
-          - LOUTH
-          - MAYO
-          - MEATH
-          - MONAGHAN
-          - WATERFORD
-          - OFFALY
-          - ROSCOMMON
-          - SLIGO
-          - TIPPERARY
-          - WESTMEATH
-          - WICKLOW
-          - CORKCOCO
-          - CORKCITY
-          - WEXFORD
-          - DLR
-          - FINGAL
-          - SOUTHDUBLIN
-          - DUBLINCITY
-          - DUBLINCC
+  process:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - name: Scrape one authority backwards from newest unchecked blank
+      - name: Drain planning professional queue
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          PROFESSIONAL_AUTHORITY: ${{ matrix.authority }}
-          PROFESSIONAL_WORKER_LIMIT: "300"
-          PROFESSIONAL_WORKER_DELAY_MS: "500"
+          PROFESSIONAL_WORKER_LIMIT: "2400"
+          PROFESSIONAL_WORKER_DELAY_MS: "650"
+          PROFESSIONAL_WORKER_MAX_RUNTIME_MS: "2400000"
+          PROFESSIONAL_STALE_LEASE_MINUTES: "60"
         run: npm run work:planning-professionals
