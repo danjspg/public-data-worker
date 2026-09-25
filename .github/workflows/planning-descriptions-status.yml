@@ -1,6 +1,6 @@
 name: "[PUBLIC] Planning worker queue status"
 
-# Read-only status probe. Refresh marker: 2026-09-25T17:28Z
+# Read-only status probe. Refresh marker: 2026-09-25T21:38Z
 on:
   workflow_dispatch:
   push:
