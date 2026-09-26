@@ -2,7 +2,7 @@ name: "[PUBLIC] Commercial classifier incremental"
 
 on:
   schedule:
-    - cron: "7,37 * * * *"
+    - cron: "5 7 * * 1-5"
   workflow_dispatch:
 
 permissions:
