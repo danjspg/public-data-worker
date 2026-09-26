@@ -9,6 +9,11 @@ const LIMIT = Math.max(1, Math.min(Number(process.env.PROFESSIONAL_WORKER_LIMIT 
 const DELAY_MS = Math.max(350, Number(process.env.PROFESSIONAL_WORKER_DELAY_MS || 500));
 const MAX_RUNTIME_MS = Math.max(60000, Math.min(Number(process.env.PROFESSIONAL_WORKER_MAX_RUNTIME_MS || 1200000), 2700000));
 const STALE_LEASE_MINUTES = Math.max(15, Math.min(Number(process.env.PROFESSIONAL_STALE_LEASE_MINUTES || 60), 240));
+const CONCURRENCY = Math.max(1, Math.min(Number(process.env.PROFESSIONAL_WORKER_CONCURRENCY || 4), 8));
+const AGILE_CONCURRENCY = Math.max(1, Math.min(Number(process.env.PROFESSIONAL_AGILE_CONCURRENCY || 2), CONCURRENCY));
+const EPLAN_CONCURRENCY = Math.max(1, Math.min(Number(process.env.PROFESSIONAL_EPLAN_CONCURRENCY || 3), CONCURRENCY));
+const AGILE_TIMEOUT_MS = Math.max(3000, Math.min(Number(process.env.PROFESSIONAL_AGILE_TIMEOUT_MS || 8000), 15000));
+const EPLAN_TIMEOUT_MS = Math.max(3000, Math.min(Number(process.env.PROFESSIONAL_EPLAN_TIMEOUT_MS || 10000), 15000));
 const EPLAN_BASE_URL = 'https://www.eplanning.ie';
 const EPLAN_AUTHORITIES = {
   CARLOW:'CarlowCC', CAVAN:'CavanCC', CLARE:'ClareCC', DONEGAL:'DonegalCC', GALWAYCOCO:'GalwayCC', GALWAYCITY:'GalwayCity',
@@ -81,12 +86,20 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
   try { return await fetch(url, { ...options, signal: controller.signal }); } finally { clearTimeout(timer); }
 }
+function isTimeoutError(error) {
+  return error?.name === 'AbortError' || error?.name === 'TimeoutError' || /aborted|timeout/i.test(String(error || ''));
+}
+function sourceFamilyForAuthority(authority) {
+  if (AGILE_AUTHORITIES[authority]) return 'agile';
+  if (EPLAN_AUTHORITIES[authority]) return 'eplan';
+  return 'manual';
+}
 async function fetchProfessional(authority, reference) {
   if (AGILE_AUTHORITIES[authority]) {
     const cfg = AGILE_AUTHORITIES[authority];
     const params = new URLSearchParams({ reference:String(reference).trim() });
     try {
-      const response = await fetchWithTimeout(`https://planningapi.agileapplications.ie/api/application/search?${params}`, { headers:{ 'User-Agent':'Public records data worker','x-client':cfg.code,'x-product':'CITIZENPORTAL','x-service':'PA' } });
+      const response = await fetchWithTimeout(`https://planningapi.agileapplications.ie/api/application/search?${params}`, { headers:{ 'User-Agent':'Public records data worker','x-client':cfg.code,'x-product':'CITIZENPORTAL','x-service':'PA' } }, AGILE_TIMEOUT_MS);
       if (!response.ok) return { ok:false, reason:`http_${response.status}`, source_family:'agile', retry_after_ms:response.status === 429 ? retryAfterMs(response) : null };
       const data = await response.json();
       const wanted = String(reference || '').replace(/\s+/g,'').toUpperCase();
@@ -95,19 +108,23 @@ async function fetchProfessional(authority, reference) {
       const raw = htmlText(row.agentName);
       const source_url = `https://planning.agileapplications.ie/${cfg.tenant}/search-applications/`;
       return { ok:true, reason:raw ? null : 'no_agent', source_family:'agile', source_url, professionals:raw ? [{ role:'agent',raw_name:raw,raw_name_normalized:normalizeName(raw),confidence:100,source_payload:{source_application_id:row.id ?? null,identity_hints:identityHints(raw,{})} }] : [] };
-    } catch (error) { return { ok:false, reason:'fetch_error', error:String(error), source_family:'agile' }; }
+    } catch (error) {
+      return { ok:false, reason:isTimeoutError(error) ? 'timeout' : 'fetch_error', error:isTimeoutError(error) ? `timeout_${AGILE_TIMEOUT_MS}ms` : String(error), source_family:'agile' };
+    }
   }
   const path = EPLAN_AUTHORITIES[authority];
   if (!path) return { ok:false, reason:'unsupported_authority', source_family:'manual' };
   const ref = String(reference || '').trim().replace(/\s+/g,'').toUpperCase();
   const url = `${EPLAN_BASE_URL}/${path}/AppFileRefDetails/${encodeURIComponent(ref)}/0`;
   try {
-    const response = await fetchWithTimeout(url, { headers:{ 'User-Agent':'Public records data worker' } });
+    const response = await fetchWithTimeout(url, { headers:{ 'User-Agent':'Public records data worker' } }, EPLAN_TIMEOUT_MS);
     if (response.status === 404) return { ok:false, reason:'not_found', source_family:'eplan', source_url:url };
     if (!response.ok) return { ok:false, reason:`http_${response.status}`, source_family:'eplan', source_url:url, retry_after_ms:response.status === 429 ? retryAfterMs(response) : null };
     const professionals = parseEplanAgent(await response.text());
     return { ok:true, reason:professionals.length ? null : 'no_agent', source_family:'eplan', source_url:url, professionals };
-  } catch (error) { return { ok:false, reason:'fetch_error', error:String(error), source_family:'eplan', source_url:url }; }
+  } catch (error) {
+    return { ok:false, reason:isTimeoutError(error) ? 'timeout' : 'fetch_error', error:isTimeoutError(error) ? `timeout_${EPLAN_TIMEOUT_MS}ms` : String(error), source_family:'eplan', source_url:url };
+  }
 }
 
 const client = new Client({ connectionString, ssl:{ rejectUnauthorized:false } });
@@ -192,6 +209,49 @@ async function promoteCommercialIntelligenceCandidates() {
 
 let completed = 0, deferred = 0, attempted = 0, rateLimited = 0, runtimeStopped = false;
 const startedAt = Date.now();
+const activeAuthorities = new Set();
+const activeByFamily = new Map();
+const familyCooldownUntil = new Map();
+const statsByAuthority = {};
+const statsByFamily = {};
+const statsByReason = {};
+
+function bump(container, key, field) {
+  if (!container[key]) container[key] = {};
+  container[key][field] = (container[key][field] || 0) + 1;
+}
+function familyLimit(family) {
+  if (family === 'agile') return AGILE_CONCURRENCY;
+  if (family === 'eplan') return EPLAN_CONCURRENCY;
+  return 1;
+}
+function claimNext(items) {
+  const now = Date.now();
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (!item) continue;
+    const authority = String(item.input.local_authority_code || '').toUpperCase();
+    const family = sourceFamilyForAuthority(authority);
+    if (activeAuthorities.has(authority)) continue;
+    if ((activeByFamily.get(family) || 0) >= familyLimit(family)) continue;
+    if ((familyCooldownUntil.get(family) || 0) > now) continue;
+    items[i] = null;
+    activeAuthorities.add(authority);
+    activeByFamily.set(family, (activeByFamily.get(family) || 0) + 1);
+    return { item, authority, family };
+  }
+  return null;
+}
+function releaseClaim(authority, family) {
+  activeAuthorities.delete(authority);
+  activeByFamily.set(family, Math.max(0, (activeByFamily.get(family) || 1) - 1));
+}
+function remainingCount(items) {
+  let count = 0;
+  for (const item of items) if (item) count += 1;
+  return count;
+}
+
 try {
   const recoveredStale = await recoverStaleLeases();
   const promoted = await promoteCommercialIntelligenceCandidates();
@@ -208,32 +268,62 @@ try {
       id desc
     limit $1
   `, params);
+  const items = rows.slice();
 
-  for (const item of rows) {
-    if (Date.now() - startedAt >= MAX_RUNTIME_MS) {
-      runtimeStopped = true;
-      break;
-    }
-
+  async function processClaim(claimed) {
+    const { item, authority, family } = claimed;
     await client.query("update work_items set status='running', leased_at=now(), attempts=attempts+1, updated_at=now() where id=$1",[item.id]);
     attempted += 1;
-    const result = await fetchProfessional(String(item.input.local_authority_code || '').toUpperCase(), item.input.reference);
-    const transient = !result.ok && (result.reason === 'fetch_error' || /^http_(408|425|429|500|502|503|504)$/.test(result.reason || ''));
+    bump(statsByAuthority, authority || 'UNKNOWN', 'attempted');
+    bump(statsByFamily, family, 'attempted');
+
+    const result = await fetchProfessional(authority, item.input.reference);
+    const transient = !result.ok && (result.reason === 'timeout' || result.reason === 'fetch_error' || /^http_(408|425|429|500|502|503|504)$/.test(result.reason || ''));
+    const reasonKey = result.ok ? ((result.professionals || []).length ? 'found' : 'no_agent') : (result.reason || 'unknown');
+    bump(statsByReason, reasonKey, transient ? 'deferred' : 'completed');
+
     if (transient) {
       await client.query("update work_items set status='pending',leased_at=null,result=null,available_at=now()+interval '30 minutes',last_error=$2,completed_at=null,updated_at=now() where id=$1",[item.id,String(result.error || result.reason).slice(0,500)]);
       deferred += 1;
+      bump(statsByAuthority, authority || 'UNKNOWN', 'deferred');
+      bump(statsByFamily, family, 'deferred');
     } else {
       await client.query("update work_items set status='completed',leased_at=null,result=$2::jsonb,completed_at=now(),last_error=null,updated_at=now() where id=$1",[item.id,JSON.stringify(result)]);
       completed += 1;
+      bump(statsByAuthority, authority || 'UNKNOWN', 'completed');
+      bump(statsByFamily, family, 'completed');
     }
 
     let pauseMs = DELAY_MS;
     if (result.reason === 'http_429') {
       rateLimited += 1;
       pauseMs = Math.max(DELAY_MS, Number(result.retry_after_ms || 5000));
+      familyCooldownUntil.set(family, Math.max(familyCooldownUntil.get(family) || 0, Date.now() + Math.min(pauseMs, 60000)));
     }
     await sleep(Math.min(pauseMs, 60000));
   }
+
+  async function worker() {
+    while (true) {
+      if (Date.now() - startedAt >= MAX_RUNTIME_MS) {
+        runtimeStopped = remainingCount(items) > 0;
+        return;
+      }
+      const claimed = claimNext(items);
+      if (!claimed) {
+        if (remainingCount(items) === 0) return;
+        await sleep(100);
+        continue;
+      }
+      try {
+        await processClaim(claimed);
+      } finally {
+        releaseClaim(claimed.authority, claimed.family);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length:CONCURRENCY }, () => worker()));
 
   const queue = (await client.query(`
     select
@@ -249,6 +339,16 @@ try {
 
   console.log(JSON.stringify({
     authority:AUTHORITY || null,
+    config:{
+      limit:LIMIT,
+      concurrency:CONCURRENCY,
+      agileConcurrency:AGILE_CONCURRENCY,
+      eplanConcurrency:EPLAN_CONCURRENCY,
+      delayMs:DELAY_MS,
+      agileTimeoutMs:AGILE_TIMEOUT_MS,
+      eplanTimeoutMs:EPLAN_TIMEOUT_MS,
+      maxRuntimeMs:MAX_RUNTIME_MS,
+    },
     recoveredStale,
     promoted,
     selected:rows.length,
@@ -257,7 +357,11 @@ try {
     deferred,
     rateLimited,
     runtimeStopped,
+    unattemptedSelected:remainingCount(items),
     runtimeSeconds:Math.round((Date.now()-startedAt)/1000),
+    statsByFamily,
+    statsByReason,
+    statsByAuthority,
     queue,
   }, null, 2));
 } finally { await client.end().catch(() => {}); }
