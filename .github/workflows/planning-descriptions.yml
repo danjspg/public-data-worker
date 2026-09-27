@@ -9,8 +9,7 @@ on:
       - "src/retry-transient.mjs"
       - "package.json"
   schedule:
-    # Temporary catch-up cadence; return to maintenance cadence once the finite backlog is cleared.
-    - cron: "5,15,25,35,45,55 * * * *"
+    - cron: "25 0 * * 1,3,5"
   workflow_dispatch:
 
 permissions:
@@ -23,7 +22,7 @@ concurrency:
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 135
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -41,7 +40,5 @@ jobs:
       - name: Process queued planning description repairs
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          DESCRIPTION_WORKER_LIMIT: "800"
-          DESCRIPTION_WORKER_MAX_RUNTIME_MS: "7200000"
-          DESCRIPTION_AGILE_CONCURRENCY: "2"
+          DESCRIPTION_WORKER_LIMIT: "400"
         run: npm run work:planning-descriptions
