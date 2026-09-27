@@ -9,7 +9,8 @@ on:
       - "src/retry-transient.mjs"
       - "package.json"
   schedule:
-    - cron: "25 0 * * 1,3,5"
+    # Steady-state maintenance: one bounded weekly pass is sufficient now the finite backlog is closed.
+    - cron: "25 0 * * 1"
   workflow_dispatch:
 
 permissions:
