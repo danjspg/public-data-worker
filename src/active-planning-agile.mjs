@@ -12,6 +12,9 @@ const CONFIG = {
   CORKCOCO: { client: 'CORKCOCO', tenant: 'corkcoco', detailIdFromSourceUrl: false },
   CORKCITY: { client: 'CORKCITY', tenant: 'corkcity', detailIdFromSourceUrl: false },
   DUBLINCITY: { client: 'DCC', tenant: 'dublincity', detailIdFromSourceUrl: false },
+  DLR: { client: 'DLR', tenant: 'dunlaoghaire', detailIdFromSourceUrl: false },
+  FINGAL: { client: 'FG', tenant: 'fingal', detailIdFromSourceUrl: false },
+  SOUTHDUBLIN: { client: 'SD', tenant: 'southdublin', detailIdFromSourceUrl: false },
   WEXFORD: { client: 'WEXFORD', tenant: 'wexford', detailIdFromSourceUrl: true },
 };
 
@@ -115,23 +118,15 @@ try {
         await client.query(`
           insert into source_sync_state(job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at)
           values(
-            'active_planning_agile_detail',
-            $1,
-            $2::timestamptz,
+            'active_planning_agile_detail',$1,$2::timestamptz,
             case when $3 then $2::timestamptz else null::timestamptz end,
             case when $4::text is null
                  then jsonb_build_object('last_source_status','missing','last_source_error',coalesce($6::text,'source_not_found'))
-                 else jsonb_build_object(
-                        'signature_version','agile-v2',
-                        'last_seen_source_signature',$4::text,
-                        'last_source_status','found',
-                        'last_source_error',null
-                      )
+                 else jsonb_build_object('signature_version','agile-v2','last_seen_source_signature',$4::text,'last_source_status','found','last_source_error',null)
                       || case when $5 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
                               when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
                               else '{}'::jsonb end
-            end,
-            now()
+            end,now()
           )
           on conflict(job_family,application_key) do update
           set last_checked_at=excluded.last_checked_at,
@@ -139,7 +134,6 @@ try {
               metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
               updated_at=now()
         `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing,result.reason || null]);
-  
         await client.query('commit');
       } catch (stateError) {
         await client.query('rollback').catch(() => {});
@@ -149,11 +143,7 @@ try {
       else missing += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await client.query(`
-        update work_items
-        set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now()
-        where id=$1
-      `, [item.id, message.slice(0,500)]);
+      await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now() where id=$1`, [item.id, message.slice(0,500)]);
       deferred += 1;
     }
     await sleep(250);
