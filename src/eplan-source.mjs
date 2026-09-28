@@ -128,6 +128,15 @@ function extractPagingUrls(html,authorityId){
   }
   return [...urls];
 }
+function diagnosticLinks(html){
+  const links=[];
+  for(const m of String(html||'').matchAll(/href=["']([^"']+)["']/gi)){
+    const href=m[1].replace(/&amp;/g,'&');
+    if(/plan|file|app|search|detail|result/i.test(href))links.push(href);
+    if(links.length>=12)break;
+  }
+  return links;
+}
 async function fetchEplanReceivedReferences(authorityCode,days=42){
   const config=EPLAN_AUTHORITIES[authorityCode];
   if(!config||!Number.isInteger(config.id))throw new Error('unsupported_eplan_authority');
@@ -167,7 +176,11 @@ async function fetchEplanReceivedReferences(authorityCode,days=42){
     const looksLikeListingForm=/SearchListing|View Planning Application Lists Search/i.test(resultHtml);
     const noResults=/no (?:planning )?(?:applications|records|results)|0 results|no records found/i.test(htmlText(resultHtml));
     if(looksLikeListingForm&&!noResults)throw new Error('eplan_v6_listing_submission_not_accepted');
-    if(!noResults)throw new Error('eplan_v6_zero_refs_unverified');
+    if(!noResults){
+      const text=htmlText(resultHtml).slice(0,260).replace(/\s+/g,' ');
+      const links=diagnosticLinks(resultHtml).join('|').slice(0,420);
+      throw new Error(`eplan_v6_zero_refs_unverified links=${links} text=${text}`);
+    }
   }
   return {references:[...refs],listing_url:listingUrl,search_url:searchUrl,window_days:windowDays,authority_id:authorityId};
 }
