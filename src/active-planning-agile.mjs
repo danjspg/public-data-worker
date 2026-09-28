@@ -7,6 +7,7 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
 const LIMIT = Math.max(1, Math.min(Number(process.env.ACTIVE_AGILE_WORKER_LIMIT || 1000), 5000));
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
+const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const CONFIG = {
   CORKCOCO: { client: 'CORKCOCO', tenant: 'corkcoco', detailIdFromSourceUrl: false },
@@ -19,7 +20,14 @@ const CONFIG = {
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-function detailId(input, config) {
+const normaliseReference = (value) => String(value || '').trim().replace(/\s+/g,'').toUpperCase();
+const headersFor = (config) => ({
+  'User-Agent': 'Public records data worker',
+  'x-client': config.client,
+  'x-product': 'CITIZENPORTAL',
+  'x-service': 'PA',
+});
+function sourceDetailId(input, config) {
   if (config.detailIdFromSourceUrl) {
     const match = String(input.source_url || '').match(/\/application-details\/(\d+)/);
     if (match) return Number(match[1]);
@@ -27,37 +35,68 @@ function detailId(input, config) {
   const sourceId = Number(input.source_application_id);
   return Number.isInteger(sourceId) ? sourceId : null;
 }
-
-async function fetchDetail(input, config) {
-  const id = detailId(input, config);
-  if (!id) return { found: false, reason: 'missing_detail_id' };
+function sourceIdTrusted(input, config) {
+  const sourceUrl=String(input.source_url||'').toLowerCase();
+  return sourceUrl.includes(`planning.agileapplications.ie/${config.tenant}/`) || sourceUrl.includes('planningapi.agileapplications.ie/');
+}
+async function fetchJson(url,config){
   let lastError;
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      const response = await fetch(`${DETAIL_URL}/${id}`, {
-        headers: {
-          'User-Agent': 'Public records data worker',
-          'x-client': config.client,
-          'x-product': 'CITIZENPORTAL',
-          'x-service': 'PA',
-        },
-        signal: AbortSignal.timeout(30000),
-      });
-      if (response.ok) return { found: true, detail_id: id, detail: await response.json() };
-      if (response.status === 404) return { found: false, reason: 'not_found', detail_id: id };
-      lastError = new Error(`HTTP ${response.status}`);
-      if (!RETRYABLE.has(response.status)) break;
-    } catch (error) {
-      lastError = error;
-    }
-    if (attempt < 5) await sleep(attempt * 1000);
+  for(let attempt=1;attempt<=5;attempt++){
+    try{
+      const response=await fetch(url,{headers:headersFor(config),signal:AbortSignal.timeout(30000)});
+      if(response.ok)return await response.json();
+      if(response.status===404)return null;
+      lastError=new Error(`HTTP ${response.status}`);
+      if(!RETRYABLE.has(response.status))break;
+    }catch(error){lastError=error;}
+    if(attempt<5)await sleep(attempt*1000);
   }
-  throw lastError || new Error('detail request failed');
+  throw lastError||new Error('Agile request failed');
+}
+async function fetchDetailById(id,config){
+  if(!Number.isInteger(id))return null;
+  return fetchJson(`${DETAIL_URL}/${id}`,config);
+}
+async function resolveReference(input,config){
+  const expected=normaliseReference(input.reference);
+  if(!expected)return null;
+  const params=new URLSearchParams({query:String(input.reference).trim()});
+  const data=await fetchJson(`${SEARCH_URL}?${params}`,config);
+  const match=(data?.results||[]).find((row)=>normaliseReference(row?.reference)===expected);
+  return Number.isInteger(match?.id)?{id:match.id,search:match}:null;
+}
+async function fetchDetail(input, config) {
+  const expected=normaliseReference(input.reference);
+  const candidateId=sourceDetailId(input,config);
+  let resolvedBy='source_id';
+  let id=candidateId;
+
+  // IDs originating from NPAD/ArcGIS are a different namespace. Resolve them by
+  // council reference before use; only first-party Agile URLs make an ID trusted.
+  if(!id || !sourceIdTrusted(input,config)){
+    const resolved=await resolveReference(input,config);
+    if(!resolved)return {found:false,reason:'reference_not_found',detail_id:null,resolved_by:'reference'};
+    id=resolved.id;resolvedBy='reference';
+  }
+
+  let detail=await fetchDetailById(id,config);
+  if(detail && normaliseReference(detail.reference)===expected){
+    return {found:true,detail_id:id,detail,resolved_by:resolvedBy,source_id_changed:candidateId!==id};
+  }
+
+  // A previously trusted ID can still become stale. Re-resolve once and require an exact reference match.
+  const resolved=await resolveReference(input,config);
+  if(!resolved)return {found:false,reason:detail?'reference_mismatch':'not_found',detail_id:id,resolved_by:resolvedBy};
+  detail=await fetchDetailById(resolved.id,config);
+  if(!detail || normaliseReference(detail.reference)!==expected){
+    return {found:false,reason:'reference_mismatch',detail_id:resolved.id,resolved_by:'reference'};
+  }
+  return {found:true,detail_id:resolved.id,detail,resolved_by:'reference',source_id_changed:candidateId!==resolved.id};
 }
 
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
-let selected = 0, completed = 0, missing = 0, deferred = 0;
+let selected = 0, completed = 0, missing = 0, deferred = 0, resolvedByReference=0, remappedIds=0;
 try {
   const { rows } = await client.query(`
     select i.id,i.input,
@@ -86,6 +125,8 @@ try {
     }
     try {
       const result = await fetchDetail(item.input, config);
+      if(result.resolved_by==='reference')resolvedByReference++;
+      if(result.source_id_changed)remappedIds++;
       const baseResult={ ok:true, ...result };
       const sourceSignature=activeAgileSignature(baseResult);
       const previousSignature=item.previous_source_signature || null;
@@ -99,22 +140,11 @@ try {
       try {
         await client.query(`
           update work_items
-          set status='completed',
-              result=$2::jsonb,
+          set status='completed', result=$2::jsonb,
               applied_at=case when $3 then now() else null end,
-              completed_at=now(),
-              last_error=null,
-              attempts=attempts+1,
-              updated_at=now()
+              completed_at=now(), last_error=null, attempts=attempts+1, updated_at=now()
           where id=$1
-        `, [item.id, JSON.stringify({
-          ...baseResult,
-          source_signature:sourceSignature,
-          change_detected:changeDetected,
-          baseline_missing:baselineMissing,
-          requires_prod_baseline_validation:baselineMissing,
-          checked_at:checkedAt
-        }), nothingToApply]);
+        `, [item.id, JSON.stringify({...baseResult,source_signature:sourceSignature,change_detected:changeDetected,baseline_missing:baselineMissing,requires_prod_baseline_validation:baselineMissing,checked_at:checkedAt}), nothingToApply]);
         await client.query(`
           insert into source_sync_state(job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at)
           values(
@@ -122,7 +152,7 @@ try {
             case when $3 then $2::timestamptz else null::timestamptz end,
             case when $4::text is null
                  then jsonb_build_object('last_source_status','missing','last_source_error',coalesce($6::text,'source_not_found'))
-                 else jsonb_build_object('signature_version','agile-v2','last_seen_source_signature',$4::text,'last_source_status','found','last_source_error',null)
+                 else jsonb_build_object('signature_version','agile-v2','last_seen_source_signature',$4::text,'last_source_status','found','last_source_error',null,'resolved_detail_id',$7::bigint,'resolved_by',$8::text)
                       || case when $5 then jsonb_build_object('baseline_missing',true,'pending_prod_change',false)
                               when $3 then jsonb_build_object('baseline_missing',false,'pending_prod_change',true)
                               else '{}'::jsonb end
@@ -133,22 +163,21 @@ try {
               last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
               metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
               updated_at=now()
-        `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing,result.reason || null]);
+        `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing,result.reason || null,result.detail_id||null,result.resolved_by||null]);
         await client.query('commit');
       } catch (stateError) {
         await client.query('rollback').catch(() => {});
         throw stateError;
       }
-      if (result.found) completed += 1;
-      else missing += 1;
+      if (result.found) completed += 1; else missing += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now() where id=$1`, [item.id, message.slice(0,500)]);
       deferred += 1;
     }
-    await sleep(250);
+    await sleep(100);
   }
-  console.log(JSON.stringify({ selected, completed, missing, deferred }, null, 2));
+  console.log(JSON.stringify({ selected, completed, missing, deferred, resolvedByReference, remappedIds }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
