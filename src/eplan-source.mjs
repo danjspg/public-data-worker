@@ -1,6 +1,7 @@
 import { EPLAN_AUTHORITIES } from './planning-source-registry.mjs';
 
 const EPLAN_BASE_URL='https://www.eplanning.ie';
+const EPLAN_V6_BASE_URL='https://eplanning.ie/eplan';
 const RETRYABLE=new Set([408,425,429,500,502,503,504]);
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 const normaliseReference=(value)=>String(value||'').trim().replace(/\s+/g,'').toUpperCase();
@@ -106,50 +107,69 @@ function extractCookie(response){
   const raw=response.headers.get('set-cookie')||'';
   return raw.split(';')[0]||null;
 }
-function extractDetailReferences(html,path){
+function extractDetailReferences(html){
   const refs=new Set();
-  const escaped=String(path).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   const patterns=[
-    new RegExp(`/${escaped}/AppFileRefDetails/([^/"'?#]+)(?:/0)?`,'gi'),
     /AppFileRefDetails\/([^/"'?#]+)(?:\/0)?/gi,
+    /(?:FileRef|fileRef|filenumber|fileNumber)=([^&"'#]+)/gi,
   ];
-  for(const pattern of patterns){for(const match of String(html||'').matchAll(pattern)){try{refs.add(normaliseReference(decodeURIComponent(match[1])));}catch{refs.add(normaliseReference(match[1]));}}}
+  for(const pattern of patterns){
+    for(const match of String(html||'').matchAll(pattern)){
+      try{refs.add(normaliseReference(decodeURIComponent(match[1])));}catch{refs.add(normaliseReference(match[1]));}
+    }
+  }
   return [...refs].filter(Boolean);
 }
-function extractPagingUrls(html,path){
+function extractPagingUrls(html,authorityId){
   const urls=new Set();
   for(const m of String(html||'').matchAll(/href=["']([^"']*searchresults[^"']*(?:page|Page)=[^"']+)["']/gi)){
     const href=m[1].replace(/&amp;/g,'&');
-    try{urls.add(new URL(href,`${EPLAN_BASE_URL}/${path}/`).toString());}catch{}
+    try{urls.add(new URL(href,`${EPLAN_V6_BASE_URL}/searchresults?localAuthorityId=${authorityId}`).toString());}catch{}
   }
   return [...urls];
 }
 async function fetchEplanReceivedReferences(authorityCode,days=42){
   const config=EPLAN_AUTHORITIES[authorityCode];
-  if(!config)throw new Error('unsupported_eplan_authority');
-  const listingUrl=`${EPLAN_BASE_URL}/${config.path}/SearchListing/RECEIVED`;
+  if(!config||!Number.isInteger(config.id))throw new Error('unsupported_eplan_authority');
+  const authorityId=config.id;
+  const listingUrl=`${EPLAN_V6_BASE_URL}/SearchListing/RECEIVED?localAuthorityId=${authorityId}`;
   const page=await fetchWithRetry(listingUrl,{},20000);
-  if(!page.ok)throw new Error(`eplan listing HTTP ${page.status}`);
+  if(!page.ok)throw new Error(`eplan v6 listing HTTP ${page.status}`);
   const html=await page.text(),token=extractRequestToken(html),cookie=extractCookie(page);
-  if(!token)throw new Error('eplan request verification token missing');
+  if(!token)throw new Error('eplan v6 request verification token missing');
   const windowDays=[7,14,28,35,42].find((value)=>value>=days)||42;
   const body=new URLSearchParams();
-  body.append('__RequestVerificationToken',token); body.append('AppStatus','0');
-  body.append('CheckBoxList[0].Id','0'); body.append('CheckBoxList[0].Name',config.name); body.append('CheckBoxList[0].IsSelected','true');
-  body.append('CheckBoxList[0].IsSelected','false'); body.append('RdoTimeLimit',windowDays===7?'0':String(windowDays));
-  body.append('SearchType','Listing'); body.append('CountyTownCount','1'); body.append('CountyTownCouncilNames',`${config.name}:0,`);
-  const response=await fetchWithRetry(`${EPLAN_BASE_URL}/${config.path}/searchresults`,{
-    method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded',...(cookie?{Cookie:cookie}:{})},body:body.toString()
+  body.append('__RequestVerificationToken',token);
+  body.append('AppStatus','0');
+  body.append('RdoTimeLimit',windowDays===7?'0':String(windowDays));
+  body.append('CheckBoxList[0].Id',String(authorityId));
+  body.append('CheckBoxList[0].Name',config.name);
+  body.append('CheckBoxList[0].IsSelected','True');
+  body.append('SearchType','Listing');
+  body.append('CountyTownCount','31');
+  body.append('CountyTownCouncilNames',`${config.name}:${authorityId},`);
+  const searchUrl=`${EPLAN_V6_BASE_URL}/searchresults?localAuthorityId=${authorityId}`;
+  const response=await fetchWithRetry(searchUrl,{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded',...(cookie?{Cookie:cookie}:{})},
+    body:body.toString()
   },30000);
-  if(!response.ok)throw new Error(`eplan search HTTP ${response.status}`);
-  const resultHtml=await response.text(),refs=new Set(extractDetailReferences(resultHtml,config.path));
-  const pages=extractPagingUrls(resultHtml,config.path).slice(0,20);
+  if(!response.ok)throw new Error(`eplan v6 search HTTP ${response.status}`);
+  const resultHtml=await response.text();
+  const refs=new Set(extractDetailReferences(resultHtml));
+  const pages=extractPagingUrls(resultHtml,authorityId).slice(0,30);
   for(const url of pages){
     const paged=await fetchWithRetry(url,{headers:cookie?{Cookie:cookie}:{}},20000);
     if(!paged.ok)continue;
-    for(const ref of extractDetailReferences(await paged.text(),config.path))refs.add(ref);
+    for(const ref of extractDetailReferences(await paged.text()))refs.add(ref);
   }
-  return {references:[...refs],listing_url:listingUrl,window_days:windowDays};
+  if(refs.size===0){
+    const looksLikeListingForm=/SearchListing|View Planning Application Lists Search/i.test(resultHtml);
+    const noResults=/no (?:planning )?(?:applications|records|results)|0 results|no records found/i.test(htmlText(resultHtml));
+    if(looksLikeListingForm&&!noResults)throw new Error('eplan_v6_listing_submission_not_accepted');
+    if(!noResults)throw new Error('eplan_v6_zero_refs_unverified');
+  }
+  return {references:[...refs],listing_url:listingUrl,search_url:searchUrl,window_days:windowDays,authority_id:authorityId};
 }
 
 export { normaliseReference, parseEplanApplication, fetchEplanApplication, fetchEplanReceivedReferences };
