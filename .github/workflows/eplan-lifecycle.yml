@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/eplan-lifecycle.yml"
       - "src/eplan-lifecycle.mjs"
+      - "src/eplan-source.mjs"
+      - "src/planning-source-registry.mjs"
       - "package.json"
   schedule:
     - cron: "15 3 * * 1-5"
@@ -23,7 +25,7 @@ concurrency:
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -38,7 +40,7 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           EPLAN_WORKER_LIMIT: "500"
-          EPLAN_WORKER_DELAY_MS: "1000"
+          EPLAN_WORKER_DELAY_MS: "750"
         run: npm run work:eplan-lifecycle
 
 # Public source fetching is isolated here; production writes remain private.
