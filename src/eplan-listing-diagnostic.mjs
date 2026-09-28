@@ -1,12 +1,19 @@
 // Temporary diagnostic: remove after ePlan result markup is confirmed.
-const base='https://eplanning.ie/eplan';
+const base='https://eplanning.ie/ePlan';
 const authorityId=12;
 const name='Kerry County Council';
-const get=await fetch(`${base}/SearchListing/RECEIVED?localAuthorityId=${authorityId}`,{headers:{'User-Agent':'Public records data worker'},redirect:'follow'});
+const listingUrl=`${base}/SearchListing/RECEIVED?localAuthorityId=${authorityId}`;
+const browserHeaders={
+  'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
+  'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language':'en-GB,en;q=0.9',
+};
+const get=await fetch(listingUrl,{headers:browserHeaders,redirect:'follow'});
 const html=await get.text();
 const tokens=[...html.matchAll(/name=["']__RequestVerificationToken["'][^>]*value=["']([^"']+)["']/gi)];
 const token=tokens.at(-1)?.[1];
-const cookie=(get.headers.get('set-cookie')||'').split(';')[0];
+const setCookies=typeof get.headers.getSetCookie==='function'?get.headers.getSetCookie():[get.headers.get('set-cookie')||''];
+const cookie=setCookies.filter(Boolean).map(v=>v.split(';')[0]).join('; ');
 if(!token)throw new Error('token missing');
 const body=new URLSearchParams();
 body.append('__RequestVerificationToken',token);
@@ -18,9 +25,16 @@ body.append('CheckBoxList[0].IsSelected','True');
 body.append('SearchType','Listing');
 body.append('CountyTownCount','31');
 body.append('CountyTownCouncilNames',`${name}:${authorityId},`);
-const post=await fetch(`${base}/searchresults?localAuthorityId=${authorityId}`,{
+const postUrl=`${base}/searchresults?localAuthorityId=${authorityId}`;
+const post=await fetch(postUrl,{
   method:'POST',redirect:'follow',
-  headers:{'User-Agent':'Public records data worker','Content-Type':'application/x-www-form-urlencoded',Cookie:cookie},
+  headers:{
+    ...browserHeaders,
+    'Content-Type':'application/x-www-form-urlencoded',
+    'Origin':'https://eplanning.ie',
+    'Referer':listingUrl,
+    ...(cookie?{Cookie:cookie}:{}),
+  },
   body:body.toString(),
 });
 const result=await post.text();
@@ -33,6 +47,8 @@ const tokensFound=[...new Set([
 ])].slice(0,80);
 console.log(JSON.stringify({
   getStatus:get.status,
+  cookieNames:setCookies.map(v=>v.split('=')[0]),
+  tokenCount:tokens.length,
   postStatus:post.status,
   finalUrl:post.url,
   redirected:post.redirected,
