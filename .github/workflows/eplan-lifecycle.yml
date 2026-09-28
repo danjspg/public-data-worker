@@ -44,3 +44,4 @@ jobs:
         run: npm run work:eplan-lifecycle
 
 # Public source fetching is isolated here; production writes remain private.
+# Immediate catch-up started after first-party ePlan discovery migration.
