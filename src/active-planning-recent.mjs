@@ -8,13 +8,15 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
 const LIMIT = Math.max(1, Math.min(Number(process.env.ACTIVE_RECENT_WORKER_LIMIT || 40), 100));
 const RECENT_DAYS = Math.max(7, Math.min(Number(process.env.ACTIVE_RECENT_DAYS || 21), 42));
-const SOURCE_POLICY_VERSION = 'first-party-v2';
+const SOURCE_POLICY_VERSION = 'first-party-v3';
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
 const AGILE_SEARCH = 'https://planningapi.agileapplications.ie/api/application/search';
+const AGILE_DETAIL = 'https://planningapi.agileapplications.ie/api/application';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const addDays = (date, days) => { const next = new Date(`${date}T00:00:00Z`); next.setUTCDate(next.getUTCDate()+days); return next.toISOString().slice(0,10); };
 const esc = (value) => String(value ?? '').replaceAll("'", "''");
+const normaliseReference = (value) => String(value || '').trim().replace(/\s+/g,'').toUpperCase();
 
 async function fetchJson(url, headers={}) {
   let lastError;
@@ -45,6 +47,45 @@ async function fetchNational(input){
   return rows;
 }
 function windows(from,to,size=7){const result=[];let cursor=from;while(cursor<=to){let end=addDays(cursor,size-1);if(end>to)end=to;result.push({from:cursor,to:end});cursor=addDays(end,1);}return result;}
+async function mapConcurrent(items,limit,mapper){
+  const output=new Array(items.length); let next=0;
+  async function worker(){while(true){const i=next++;if(i>=items.length)return;output[i]=await mapper(items[i],i);}}
+  await Promise.all(Array.from({length:Math.min(limit,items.length)},()=>worker()));
+  return output;
+}
+function needsAgileProposalDetail(row){
+  const proposal=String(row?.proposal||'').replace(/\s+/g,' ').trim();
+  if(!proposal)return true;
+  // Agile search currently returns a short preview for many authorities (commonly
+  // around 70-80 characters). Do not persist that preview as the authoritative
+  // planning description. Short legitimate descriptions are cheap to verify too.
+  return proposal.length<=140;
+}
+async function hydrateAgileProposal(row,headers){
+  if(!needsAgileProposalDetail(row))return row;
+  const id=Number(row?.id);
+  if(!Number.isInteger(id))return row;
+  try{
+    const detail=await fetchJson(`${AGILE_DETAIL}/${id}`,headers);
+    if(!detail||normaliseReference(detail.reference)!==normaliseReference(row.reference)){
+      throw new Error('Agile detail reference mismatch');
+    }
+    const fullProposal=String(detail.fullProposal||'').replace(/\s+/g,' ').trim();
+    const detailProposal=String(detail.proposal||'').replace(/\s+/g,' ').trim();
+    return {
+      ...row,
+      ...detail,
+      proposal:fullProposal||detailProposal||row.proposal||null,
+      fullProposal:fullProposal||null,
+      proposalHydratedFromDetail:Boolean(fullProposal),
+    };
+  }catch(error){
+    return {
+      ...row,
+      proposalHydrationError:String(error instanceof Error?error.message:error).slice(0,300),
+    };
+  }
+}
 async function fetchAgile(input){
   const config=AGILE_AUTHORITIES[input.local_authority_code];
   if(!config) throw new Error('unsupported_agile_authority');
@@ -57,13 +98,7 @@ async function fetchAgile(input){
       for(const row of json.results||[]){if(row?.reference)byRef.set(String(row.reference).trim().toUpperCase(),row);}
     }
   }
-  return [...byRef.values()];
-}
-async function mapConcurrent(items,limit,mapper){
-  const output=new Array(items.length); let next=0;
-  async function worker(){while(true){const i=next++;if(i>=items.length)return;output[i]=await mapper(items[i],i);}}
-  await Promise.all(Array.from({length:Math.min(limit,items.length)},()=>worker()));
-  return output;
+  return mapConcurrent([...byRef.values()],6,async(row)=>{const hydrated=await hydrateAgileProposal(row,headers);await sleep(50);return hydrated;});
 }
 async function fetchEplanRecent(input){
   const requestedDays=Math.max(7,Math.min(42,Math.ceil((new Date(`${input.to}T00:00:00Z`)-new Date(`${input.from}T00:00:00Z`))/86400000)+1));
