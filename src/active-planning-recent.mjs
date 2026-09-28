@@ -17,7 +17,7 @@ const SOURCE_NAMES = {
   MONAGHAN:'Monaghan County Council', SLIGO:'Sligo County Council', CARLOW:'Carlow County Council', LONGFORD:'Longford County Council', LEITRIM:'Leitrim County Council'
 };
 const AGILE = {
-  CORKCOCO:{ client:'CORKCOCO' }, CORKCITY:{ client:'CORKCITY' }, WEXFORD:{ client:'WEXFORD' }
+  CORKCOCO:{ client:'CORKCOCO' }, CORKCITY:{ client:'CORKCITY' }, DUBLINCITY:{ client:'DCC' }, WEXFORD:{ client:'WEXFORD' }
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
