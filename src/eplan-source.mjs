@@ -1,9 +1,15 @@
 import { EPLAN_AUTHORITIES } from './planning-source-registry.mjs';
 
 const EPLAN_BASE_URL='https://www.eplanning.ie';
+const EPLAN_V6_BASE_URL='https://eplanning.ie/ePlan';
 const RETRYABLE=new Set([408,425,429,500,502,503,504]);
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 const normaliseReference=(value)=>String(value||'').trim().replace(/\s+/g,'').toUpperCase();
+const BROWSER_HEADERS={
+  'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
+  'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language':'en-GB,en;q=0.9',
+};
 
 function htmlText(value){
   return String(value||'').replace(/<br\s*\/?>/gi,' ').replace(/<[^>]+>/g,' ')
@@ -102,13 +108,26 @@ function extractRequestToken(html){
   const tokens=[...String(html||'').matchAll(/name=["']__RequestVerificationToken["'][^>]*value=["']([^"']+)["']/gi)];
   return tokens.length?tokens[tokens.length-1][1]:null;
 }
-function extractCookie(response){
-  const raw=response.headers.get('set-cookie')||'';
-  return raw.split(';')[0]||null;
+function cookiesFromResponse(response){
+  const raw=typeof response.headers.getSetCookie==='function'?response.headers.getSetCookie():[response.headers.get('set-cookie')||''];
+  const values=new Map();
+  for(const item of raw.filter(Boolean)){
+    const first=item.split(';')[0];
+    const separator=first.indexOf('=');
+    if(separator>0)values.set(first.slice(0,separator),first.slice(separator+1));
+  }
+  return values;
 }
+function mergeCookieMaps(...maps){
+  const merged=new Map();
+  for(const map of maps)for(const [key,value] of map)merged.set(key,value);
+  return merged;
+}
+function cookieHeader(map){return [...map].map(([key,value])=>`${key}=${value}`).join('; ');}
 function extractDetailReferences(html){
   const refs=new Set();
   const patterns=[
+    /AppFileRefDetails\/([^/"'?#]+)\/[0-9]+(?:\?[^"']*)?/gi,
     /AppFileRefDetails\/([^/"'?#]+)(?:\/0)?/gi,
     /(?:FileRef|fileRef|filenumber|fileNumber)=([^&"'#]+)/gi,
   ];
@@ -119,75 +138,64 @@ function extractDetailReferences(html){
   }
   return [...refs].filter(Boolean);
 }
-function extractPagingUrls(html,baseUrl){
+function extractPagingUrls(html,authorityId){
   const urls=new Set();
-  for(const m of String(html||'').matchAll(/href=["']([^"']*searchresults[^"']*(?:page|Page)=[^"']+)["']/gi)){
-    const href=m[1].replace(/&amp;/g,'&');
-    try{urls.add(new URL(href,baseUrl).toString());}catch{}
+  const patterns=[
+    /href=["']([^"']*\/ePlan\/searchresults\/Default\/\d+\?[^"']*)["']/gi,
+    /href=["']([^"']*searchresults[^"']*(?:page|Page)=[^"']+)["']/gi,
+  ];
+  for(const pattern of patterns){
+    for(const m of String(html||'').matchAll(pattern)){
+      const href=m[1].replace(/&amp;/g,'&');
+      try{urls.add(new URL(href,`${EPLAN_V6_BASE_URL}/searchresults?localAuthorityId=${authorityId}`).toString());}catch{}
+    }
   }
   return [...urls];
 }
-function diagnosticLinks(html){
-  const links=[];
-  for(const m of String(html||'').matchAll(/href=["']([^"']+)["']/gi)){
-    const href=m[1].replace(/&amp;/g,'&');
-    if(/plan|file|app|search|detail|result/i.test(href))links.push(href);
-    if(links.length>=12)break;
-  }
-  return links;
-}
 async function fetchEplanReceivedReferences(authorityCode,days=42){
   const config=EPLAN_AUTHORITIES[authorityCode];
-  if(!config)throw new Error('unsupported_eplan_authority');
-
-  const listingUrl=`${EPLAN_BASE_URL}/${config.path}/SearchListing/RECEIVED`;
-  const page=await fetchWithRetry(listingUrl,{},20000);
-  if(!page.ok)throw new Error(`eplan listing HTTP ${page.status}`);
-  const html=await page.text(),token=extractRequestToken(html),cookie=extractCookie(page);
-  if(!token)throw new Error('eplan request verification token missing');
-
+  if(!config||!Number.isInteger(config.id))throw new Error('unsupported_eplan_authority');
+  const authorityId=config.id;
+  const listingUrl=`${EPLAN_V6_BASE_URL}/SearchListing/RECEIVED?localAuthorityId=${authorityId}`;
+  const page=await fetchWithRetry(listingUrl,{headers:BROWSER_HEADERS},20000);
+  if(!page.ok)throw new Error(`eplan v6 listing HTTP ${page.status}`);
+  const html=await page.text(),token=extractRequestToken(html),getCookies=cookiesFromResponse(page);
+  if(!token)throw new Error('eplan v6 request verification token missing');
   const windowDays=[7,14,28,35,42].find((value)=>value>=days)||42;
   const body=new URLSearchParams();
   body.append('__RequestVerificationToken',token);
   body.append('AppStatus','0');
   body.append('RdoTimeLimit',windowDays===7?'0':String(windowDays));
-  body.append('CheckBoxList[0].Id','0');
+  body.append('CheckBoxList[0].Id',String(authorityId));
   body.append('CheckBoxList[0].Name',config.name);
-  body.append('CheckBoxList[0].IsSelected','true');
-  body.append('CheckBoxList[0].IsSelected','false');
+  body.append('CheckBoxList[0].IsSelected','True');
   body.append('SearchType','Listing');
-  body.append('CountyTownCount','1');
-  body.append('CountyTownCouncilNames',`${config.name}:0,`);
-  body.append('SearchButton','Search');
-
-  const searchUrl=`${EPLAN_BASE_URL}/${config.path}/searchresults`;
+  body.append('CountyTownCount','31');
+  body.append('CountyTownCouncilNames',`${config.name}:${authorityId},`);
+  const searchUrl=`${EPLAN_V6_BASE_URL}/searchresults?localAuthorityId=${authorityId}`;
   const response=await fetchWithRetry(searchUrl,{
-    method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded',...(cookie?{Cookie:cookie}:{})},
+    method:'POST',redirect:'follow',
+    headers:{...BROWSER_HEADERS,'Content-Type':'application/x-www-form-urlencoded','Origin':'https://eplanning.ie','Referer':listingUrl,Cookie:cookieHeader(getCookies)},
     body:body.toString()
   },30000);
-  if(!response.ok)throw new Error(`eplan search HTTP ${response.status}`);
-
+  if(!response.ok)throw new Error(`eplan v6 search HTTP ${response.status}`);
+  if(/aspxerrorpath=/i.test(response.url))throw new Error('eplan_v6_listing_server_error');
+  const sessionCookies=mergeCookieMaps(getCookies,cookiesFromResponse(response));
   const resultHtml=await response.text();
   const refs=new Set(extractDetailReferences(resultHtml));
-  const pages=extractPagingUrls(resultHtml,searchUrl).slice(0,50);
+  const pages=extractPagingUrls(resultHtml,authorityId).slice(0,60);
   for(const url of pages){
-    const paged=await fetchWithRetry(url,{headers:cookie?{Cookie:cookie}:{}},20000);
+    const paged=await fetchWithRetry(url,{headers:{...BROWSER_HEADERS,Referer:searchUrl,Cookie:cookieHeader(sessionCookies)}},20000);
     if(!paged.ok)continue;
     for(const ref of extractDetailReferences(await paged.text()))refs.add(ref);
   }
-
   if(refs.size===0){
-    const looksLikeListingForm=/View Planning Application Lists Search|SearchListing/i.test(resultHtml);
+    const looksLikeListingForm=/SearchListing|View Planning Application Lists Search/i.test(resultHtml);
     const noResults=/no (?:planning )?(?:applications|records|results)|0 results|no records found/i.test(htmlText(resultHtml));
-    if(looksLikeListingForm&&!noResults)throw new Error('eplan_listing_submission_not_accepted');
-    if(!noResults){
-      const text=htmlText(resultHtml).slice(0,260).replace(/\s+/g,' ');
-      const links=diagnosticLinks(resultHtml).join('|').slice(0,420);
-      throw new Error(`eplan_zero_refs_unverified links=${links} text=${text}`);
-    }
+    if(looksLikeListingForm&&!noResults)throw new Error('eplan_v6_listing_submission_not_accepted');
+    if(!noResults)throw new Error('eplan_v6_zero_refs_unverified');
   }
-  return {references:[...refs],listing_url:listingUrl,search_url:searchUrl,window_days:windowDays,authority_id:config.id??null};
+  return {references:[...refs],listing_url:listingUrl,search_url:searchUrl,window_days:windowDays,authority_id:authorityId,pages_checked:pages.length+1};
 }
 
 export { normaliseReference, parseEplanApplication, fetchEplanApplication, fetchEplanReceivedReferences };
