@@ -7,6 +7,8 @@ const connectionString = process.env.WORKER_DATABASE_URL;
 if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
 const LIMIT = Math.max(1, Math.min(Number(process.env.ACTIVE_RECENT_WORKER_LIMIT || 40), 100));
+const RECENT_DAYS = Math.max(7, Math.min(Number(process.env.ACTIVE_RECENT_DAYS || 21), 42));
+const SOURCE_POLICY_VERSION = 'first-party-v2';
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
 const AGILE_SEARCH = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
@@ -85,25 +87,40 @@ async function fetchPreferred(input){
 }
 
 const client=new Client({connectionString,ssl:{rejectUnauthorized:false}});await client.connect();
-let selected=0,completed=0,deferred=0,totalRows=0,firstParty=0,fallbacks=0;
+let selected=0,completed=0,deferred=0,totalRows=0,firstParty=0,fallbacks=0,seeded=0,alreadySeeded=0;
 const bySource={agile:0,eplan:0,national:0};
 const rowsBySource={agile:0,eplan:0,national:0};
 const fallbackAuthorities=[];
 const authorityStats=[];
 try{
-  const {rows}=await client.query(`select id,input from work_items where job_type='active_planning_recent_range' and status='pending' and applied_at is null and available_at<=now() order by id limit $1`,[LIMIT]);
+  // Recent discovery is worker-owned. Production no longer needs to tell the worker
+  // which authority/source to inspect; the public registry is the source of truth.
+  const today=new Date().toISOString().slice(0,10);
+  const from=addDays(today,-(RECENT_DAYS-1));
+  for(const authority of Object.keys(NATIONAL_SOURCE_NAMES)){
+    const input={local_authority_code:authority,from,to:today,queued_for_date:today,source_policy:'first-party-preferred',source_policy_version:SOURCE_POLICY_VERSION};
+    const inserted=await client.query(`
+      insert into work_items(job_type,work_key,input,status,available_at,updated_at)
+      values('active_planning_recent_range',$1,$2::jsonb,'pending',now(),now())
+      on conflict(job_type,work_key) do nothing
+      returning id
+    `,[`${authority}:${today}:${SOURCE_POLICY_VERSION}`,JSON.stringify(input)]);
+    if(inserted.rowCount)seeded++;else alreadySeeded++;
+  }
+
+  const {rows}=await client.query(`select id,input from work_items where job_type='active_planning_recent_range' and status='pending' and applied_at is null and available_at<=now() order by id desc limit $1`,[LIMIT]);
   selected=rows.length;
   for(const item of rows){
     try{
       const fetched=await fetchPreferred(item.input);
-      const result={ok:true,rows:fetched.rows,row_count:fetched.rows.length,source_type:fetched.source_type,source_preferred:fetched.source_preferred,fallback:fetched.fallback,fallback_reason:fetched.fallback_reason||null,listing:fetched.listing||null,checked_at:new Date().toISOString()};
+      const result={ok:true,rows:fetched.rows,row_count:fetched.rows.length,source_type:fetched.source_type,source_preferred:fetched.source_preferred,fallback:fetched.fallback,fallback_reason:fetched.fallback_reason||null,listing:fetched.listing||null,checked_at:new Date().toISOString(),source_policy_version:SOURCE_POLICY_VERSION};
       await client.query(`update work_items set status='completed',result=$2::jsonb,completed_at=now(),attempts=attempts+1,last_error=null,updated_at=now() where id=$1`,[item.id,JSON.stringify(result)]);
       completed++;totalRows+=fetched.rows.length;
       bySource[fetched.source_type]=(bySource[fetched.source_type]||0)+1;
       rowsBySource[fetched.source_type]=(rowsBySource[fetched.source_type]||0)+fetched.rows.length;
       if(fetched.source_type!=='national')firstParty++;
       if(fetched.fallback){fallbacks++;fallbackAuthorities.push({authority:item.input.local_authority_code,preferred:fetched.source_preferred,reason:fetched.fallback_reason});}
-      authorityStats.push({authority:item.input.local_authority_code,source:fetched.source_type,preferred:fetched.source_preferred,fallback:fetched.fallback,rows:fetched.rows.length,listing_refs:fetched.listing?.references?.length??null});
+      authorityStats.push({authority:item.input.local_authority_code,source:fetched.source_type,preferred:fetched.source_preferred,fallback:fetched.fallback,rows:fetched.rows.length,listing_refs:fetched.listing?.references?.length??null,pages_checked:fetched.listing?.pages_checked??null});
     }catch(error){
       const message=error instanceof Error?error.message:String(error);
       await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now() where id=$1`,[item.id,message.slice(0,500)]);
@@ -111,5 +128,5 @@ try{
       authorityStats.push({authority:item.input.local_authority_code,source:null,error:message.slice(0,200)});
     }
   }
-  console.log(JSON.stringify({selected,completed,deferred,totalRows,firstParty,fallbacks,bySource,rowsBySource,fallbackAuthorities,authorityStats},null,2));
+  console.log(JSON.stringify({seeded,alreadySeeded,selected,completed,deferred,totalRows,firstParty,fallbacks,bySource,rowsBySource,fallbackAuthorities,authorityStats},null,2));
 }finally{await client.end().catch(()=>{});}
