@@ -11,6 +11,7 @@ const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const CONFIG = {
   CORKCOCO: { client: 'CORKCOCO', tenant: 'corkcoco', detailIdFromSourceUrl: false },
   CORKCITY: { client: 'CORKCITY', tenant: 'corkcity', detailIdFromSourceUrl: false },
+  DUBLINCITY: { client: 'DCC', tenant: 'dublincity', detailIdFromSourceUrl: false },
   WEXFORD: { client: 'WEXFORD', tenant: 'wexford', detailIdFromSourceUrl: true },
 };
 
