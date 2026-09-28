@@ -26,7 +26,7 @@ function lifecycleDelta(input,result){
 
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
-let processed = 0, completed = 0, deferred = 0, failed = 0, changed = 0;
+let processed = 0, completed = 0, deferred = 0, failed = 0, changed = 0, stateRecorded = 0;
 try {
   const { rows } = await client.query(`
     select id, job_type, input
@@ -55,14 +55,45 @@ try {
         const delta=result.ok ? lifecycleDelta(item.input,result) : {};
         const changeDetected=Object.keys(delta).length>0;
         const consumeInWorker=item.job_type==='eplan_active_lifecycle' && (!result.ok || !changeDetected);
-        const enrichedResult={...result,change_detected:changeDetected,delta,checked_at:new Date().toISOString(),source_type:'eplan'};
-        await client.query(`
-          update work_items
-          set status='completed', result=$2::jsonb,
-              applied_at=case when $3 then now() else applied_at end,
-              completed_at=now(), last_error=null, updated_at=now()
-          where id=$1
-        `, [item.id, JSON.stringify(enrichedResult), consumeInWorker]);
+        const checkedAt=new Date().toISOString();
+        const enrichedResult={...result,change_detected:changeDetected,delta,checked_at:checkedAt,source_type:'eplan'};
+        await client.query('begin');
+        try {
+          await client.query(`
+            update work_items
+            set status='completed', result=$2::jsonb,
+                applied_at=case when $3 then now() else applied_at end,
+                completed_at=now(), last_error=null, updated_at=now()
+            where id=$1
+          `, [item.id, JSON.stringify(enrichedResult), consumeInWorker]);
+          if(item.job_type==='eplan_active_lifecycle' && item.input?.application_id){
+            await client.query(`
+              insert into source_sync_state(job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at)
+              values(
+                'eplan_active_lifecycle',$1,$2::timestamptz,
+                case when $3 then $2::timestamptz else null::timestamptz end,
+                jsonb_build_object(
+                  'source_type','eplan',
+                  'last_source_status',case when $4 then 'found' else 'unavailable' end,
+                  'last_source_error',case when $4 then null else $5::text end,
+                  'reference',$6::text,
+                  'authority',$7::text,
+                  'pending_prod_change',$3::boolean
+                ),now()
+              )
+              on conflict(job_family,application_key) do update
+              set last_checked_at=excluded.last_checked_at,
+                  last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
+                  metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
+                  updated_at=now()
+            `,[String(item.input.application_id),checkedAt,changeDetected,result.ok,result.reason||null,item.input.reference||null,item.input.local_authority_code||null]);
+            stateRecorded += 1;
+          }
+          await client.query('commit');
+        } catch (stateError) {
+          await client.query('rollback').catch(()=>{});
+          throw stateError;
+        }
         completed += 1; if(changeDetected)changed += 1;
       }
     } catch (error) {
@@ -76,7 +107,7 @@ try {
     }
     if (index < rows.length - 1) await sleep(DELAY_MS);
   }
-  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed, deferred, failed }, null, 2));
+  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed, deferred, failed, stateRecorded }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
