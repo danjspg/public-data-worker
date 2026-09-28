@@ -6,6 +6,7 @@ const connectionString = process.env.WORKER_DATABASE_URL;
 if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
 const LIMIT = Math.max(1, Math.min(Number(process.env.ACTIVE_AGILE_WORKER_LIMIT || 1000), 5000));
+const CONCURRENCY = Math.max(1, Math.min(Number(process.env.ACTIVE_AGILE_CONCURRENCY || 6), 8));
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
@@ -70,21 +71,15 @@ async function fetchDetail(input, config) {
   const candidateId=sourceDetailId(input,config);
   let resolvedBy='source_id';
   let id=candidateId;
-
-  // IDs originating from NPAD/ArcGIS are a different namespace. Resolve them by
-  // council reference before use; only first-party Agile URLs make an ID trusted.
   if(!id || !sourceIdTrusted(input,config)){
     const resolved=await resolveReference(input,config);
     if(!resolved)return {found:false,reason:'reference_not_found',detail_id:null,resolved_by:'reference'};
     id=resolved.id;resolvedBy='reference';
   }
-
   let detail=await fetchDetailById(id,config);
   if(detail && normaliseReference(detail.reference)===expected){
     return {found:true,detail_id:id,detail,resolved_by:resolvedBy,source_id_changed:candidateId!==id};
   }
-
-  // A previously trusted ID can still become stale. Re-resolve once and require an exact reference match.
   const resolved=await resolveReference(input,config);
   if(!resolved)return {found:false,reason:detail?'reference_mismatch':'not_found',detail_id:id,resolved_by:resolvedBy};
   detail=await fetchDetailById(resolved.id,config);
@@ -92,6 +87,27 @@ async function fetchDetail(input, config) {
     return {found:false,reason:'reference_mismatch',detail_id:resolved.id,resolved_by:'reference'};
   }
   return {found:true,detail_id:resolved.id,detail,resolved_by:'reference',source_id_changed:candidateId!==resolved.id};
+}
+
+async function prepareItem(item) {
+  const config = CONFIG[item.input.local_authority_code];
+  if (!config) return { item, unsupported: true };
+  try {
+    const result = await fetchDetail(item.input, config);
+    const baseResult={ ok:true, ...result };
+    const sourceSignature=activeAgileSignature(baseResult);
+    const previousSignature=item.previous_source_signature || null;
+    const hasBaseline=Boolean(previousSignature);
+    return {
+      item, result, baseResult, sourceSignature,
+      baselineMissing:Boolean(result.found && sourceSignature && !hasBaseline),
+      changeDetected:Boolean(result.found && sourceSignature && hasBaseline && sourceSignature!==previousSignature),
+      nothingToApply:Boolean(!result.found || (sourceSignature && hasBaseline && sourceSignature===previousSignature)),
+      checkedAt:new Date().toISOString(),
+    };
+  } catch (error) {
+    return { item, error };
+  }
 }
 
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
@@ -116,26 +132,24 @@ try {
   `, [LIMIT]);
   selected = rows.length;
 
-  for (const item of rows) {
-    const config = CONFIG[item.input.local_authority_code];
-    if (!config) {
-      await client.query(`update work_items set status='failed',last_error='unsupported_agile_authority',completed_at=now(),updated_at=now() where id=$1`, [item.id]);
-      deferred += 1;
-      continue;
-    }
-    try {
-      const result = await fetchDetail(item.input, config);
+  for (let offset=0; offset<rows.length; offset+=CONCURRENCY) {
+    const prepared = await Promise.all(rows.slice(offset,offset+CONCURRENCY).map(prepareItem));
+    for (const work of prepared) {
+      const item=work.item;
+      if(work.unsupported){
+        await client.query(`update work_items set status='failed',last_error='unsupported_agile_authority',completed_at=now(),updated_at=now() where id=$1`,[item.id]);
+        deferred += 1;
+        continue;
+      }
+      if(work.error){
+        const message=work.error instanceof Error?work.error.message:String(work.error);
+        await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now() where id=$1`,[item.id,message.slice(0,500)]);
+        deferred += 1;
+        continue;
+      }
+      const {result,baseResult,sourceSignature,baselineMissing,changeDetected,nothingToApply,checkedAt}=work;
       if(result.resolved_by==='reference')resolvedByReference++;
       if(result.source_id_changed)remappedIds++;
-      const baseResult={ ok:true, ...result };
-      const sourceSignature=activeAgileSignature(baseResult);
-      const previousSignature=item.previous_source_signature || null;
-      const hasBaseline=Boolean(previousSignature);
-      const unchanged=Boolean(sourceSignature && hasBaseline && sourceSignature===previousSignature);
-      const baselineMissing=Boolean(result.found && sourceSignature && !hasBaseline);
-      const changeDetected=Boolean(result.found && sourceSignature && hasBaseline && sourceSignature!==previousSignature);
-      const nothingToApply=!result.found || unchanged;
-      const checkedAt=new Date().toISOString();
       await client.query('begin');
       try {
         await client.query(`
@@ -144,7 +158,7 @@ try {
               applied_at=case when $3 then now() else null end,
               completed_at=now(), last_error=null, attempts=attempts+1, updated_at=now()
           where id=$1
-        `, [item.id, JSON.stringify({...baseResult,source_signature:sourceSignature,change_detected:changeDetected,baseline_missing:baselineMissing,requires_prod_baseline_validation:baselineMissing,checked_at:checkedAt}), nothingToApply]);
+        `,[item.id,JSON.stringify({...baseResult,source_signature:sourceSignature,change_detected:changeDetected,baseline_missing:baselineMissing,requires_prod_baseline_validation:baselineMissing,checked_at:checkedAt}),nothingToApply]);
         await client.query(`
           insert into source_sync_state(job_family,application_key,last_checked_at,last_seen_change_at,metadata,updated_at)
           values(
@@ -163,21 +177,17 @@ try {
               last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
               metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
               updated_at=now()
-        `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing,result.reason || null,result.detail_id||null,result.resolved_by||null]);
+        `,[String(item.input.application_id),checkedAt,changeDetected,sourceSignature,baselineMissing,result.reason||null,result.detail_id||null,result.resolved_by||null]);
         await client.query('commit');
       } catch (stateError) {
-        await client.query('rollback').catch(() => {});
+        await client.query('rollback').catch(()=>{});
         throw stateError;
       }
-      if (result.found) completed += 1; else missing += 1;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now() where id=$1`, [item.id, message.slice(0,500)]);
-      deferred += 1;
+      if(result.found)completed += 1; else missing += 1;
     }
-    await sleep(100);
+    if(offset+CONCURRENCY<rows.length)await sleep(150);
   }
-  console.log(JSON.stringify({ selected, completed, missing, deferred, resolvedByReference, remappedIds }, null, 2));
+  console.log(JSON.stringify({ selected, completed, missing, deferred, resolvedByReference, remappedIds, concurrency:CONCURRENCY }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
