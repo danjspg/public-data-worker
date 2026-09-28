@@ -1,3 +1,4 @@
+// Temporary diagnostic: remove after ePlan result markup is confirmed.
 const base='https://eplanning.ie/eplan';
 const authorityId=12;
 const name='Kerry County Council';
