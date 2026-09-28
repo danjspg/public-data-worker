@@ -1,0 +1,48 @@
+name: Retry ePlan fallback authorities now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/eplan-fallback-retry-now.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Seed only transient ePlan fallbacks
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg'
+          const { Client } = pg
+          const authorities=['ROSCOMMON','LOUTH','TIPPERARY','DONEGAL','MEATH']
+          const today=new Date().toISOString().slice(0,10)
+          const start=new Date(`${today}T00:00:00Z`); start.setUTCDate(start.getUTCDate()-20)
+          const from=start.toISOString().slice(0,10)
+          const client=new Client({connectionString:process.env.WORKER_DATABASE_URL,ssl:{rejectUnauthorized:false}})
+          await client.connect()
+          try{
+            for(const authority of authorities){
+              const input={local_authority_code:authority,from,to:today,queued_for_date:today,source_policy:'first-party-preferred',source_policy_version:'first-party-v2-retry-1'}
+              await client.query(`insert into work_items(job_type,work_key,input,status,available_at,updated_at) values('active_planning_recent_range',$1,$2::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do update set input=excluded.input,status='pending',result=null,completed_at=null,applied_at=null,last_error=null,available_at=now(),updated_at=now()`,[`${authority}:${today}:first-party-v2-retry-1`,JSON.stringify(input)])
+            }
+          } finally { await client.end() }
+          NODE
+      - name: Fetch first-party ePlan retry batch
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          ACTIVE_RECENT_WORKER_LIMIT: "5"
+          ACTIVE_RECENT_DAYS: "21"
+        run: node src/active-planning-recent.mjs
