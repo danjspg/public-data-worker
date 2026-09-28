@@ -18,8 +18,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - name: Seed only transient ePlan fallbacks
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
