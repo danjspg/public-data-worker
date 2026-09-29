@@ -5,12 +5,13 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/planning-descriptions.yml"
+      - "src/planning-description-agile-special.mjs"
       - "src/planning-descriptions.mjs"
       - "src/retry-transient.mjs"
       - "package.json"
   schedule:
-    # Steady-state maintenance: one bounded weekly pass is sufficient now the finite backlog is closed.
-    - cron: "25 0 * * 1"
+    # Recent description hygiene is temporarily drained hourly through the worker DB.
+    - cron: "15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   process:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -38,8 +39,17 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
         run: node src/retry-transient.mjs
-      - name: Process queued planning description repairs
+      - name: Resolve DLR and Fingal proposals from Agile into worker DB
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          DESCRIPTION_SPECIAL_WORKER_LIMIT: "500"
+          DESCRIPTION_SPECIAL_AGILE_CONCURRENCY: "2"
+          DESCRIPTION_SPECIAL_MAX_RUNTIME_MS: "2700000"
+        run: node src/planning-description-agile-special.mjs
+      - name: Process remaining queued description repairs
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           DESCRIPTION_WORKER_LIMIT: "400"
+          DESCRIPTION_WORKER_MAX_RUNTIME_MS: "2700000"
+          DESCRIPTION_AGILE_CONCURRENCY: "2"
         run: npm run work:planning-descriptions
