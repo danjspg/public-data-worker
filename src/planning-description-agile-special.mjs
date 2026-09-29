@@ -6,7 +6,7 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
 const CLAIM_LIMIT = Math.max(1, Math.min(Number(process.env.DESCRIPTION_SPECIAL_WORKER_LIMIT || 500), 1000));
 const CONCURRENCY = Math.max(1, Math.min(Number(process.env.DESCRIPTION_SPECIAL_AGILE_CONCURRENCY || 2), 6));
-const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPTION_SPECIAL_MAX_RUNTIME_MS || 45 * 60_000), 50 * 60_000));
+const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPTION_SPECIAL_MAX_RUNTIME_MS || 35 * 60_000), 50 * 60_000));
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
@@ -178,6 +178,7 @@ try {
       and input->>'local_authority_code' in ('DLR','FINGAL')
   `);
   const remainingReady = Number(remainingRows[0]?.count || 0);
+  const stoppedForTime = remainingReady > 0 && !timeRemaining();
 
   console.log(JSON.stringify({
     selected,
@@ -185,13 +186,15 @@ try {
     deferred,
     failed,
     remainingReady,
+    stoppedForTime,
     runtimeSeconds: Math.round((Date.now() - startedAt) / 1000),
     concurrency: CONCURRENCY,
     byAuthority,
   }, null, 2));
 
-  if (remainingReady > 0) process.exitCode = 2;
-  else if (failed > Math.max(25, Math.floor(selected * 0.1))) process.exitCode = 1;
+  // A non-empty backlog after the bounded runtime is normal catch-up progress, not a job failure.
+  // Only fail the workflow when there is a meaningful permanent-error rate.
+  if (failed > Math.max(25, Math.floor(selected * 0.1))) process.exitCode = 1;
 } finally {
   await client.end().catch(() => {});
 }
