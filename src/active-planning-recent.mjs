@@ -97,6 +97,15 @@ async function fetchAgile(input){
       const json=await fetchJson(`${AGILE_SEARCH}?${params}`,headers);
       for(const row of json.results||[]){if(row?.reference)byRef.set(String(row.reference).trim().toUpperCase(),row);}
     }
+    // South Dublin exemption declarations (ED references) are omitted when the
+    // Agile endpoint is filtered to registered/determined. A small unfiltered
+    // request over the same seven-day window captures those rows without changing
+    // discovery behaviour for the other Agile authorities.
+    if(input.local_authority_code==='SOUTHDUBLIN'){
+      const params=new URLSearchParams({registrationDateFrom:`${window.from}T00:00:00Z`,registrationDateTo:`${window.to}T23:59:59Z`});
+      const json=await fetchJson(`${AGILE_SEARCH}?${params}`,headers);
+      for(const row of json.results||[]){if(row?.reference)byRef.set(String(row.reference).trim().toUpperCase(),row);}
+    }
   }
   return mapConcurrent([...byRef.values()],6,async(row)=>{const hydrated=await hydrateAgileProposal(row,headers);await sleep(50);return hydrated;});
 }
