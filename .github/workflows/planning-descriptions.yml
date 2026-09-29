@@ -19,7 +19,8 @@ permissions:
 
 concurrency:
   group: public-planning-descriptions
-  cancel-in-progress: false
+  # Work is checkpointed in the worker DB, so the newest code/config should replace stale runs.
+  cancel-in-progress: true
 
 jobs:
   process:
