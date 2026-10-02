@@ -9,6 +9,7 @@ const CONCURRENCY = Math.max(1, Math.min(Number(process.env.DESCRIPTION_SPECIAL_
 const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPTION_SPECIAL_MAX_RUNTIME_MS || 35 * 60_000), 50 * 60_000));
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
+const SEARCH_STATUSES = ['registered','determined'];
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const SPECIAL_AUTHORITIES = ['DLR','FINGAL','WEXFORD'];
 const CONFIG = {
@@ -58,11 +59,30 @@ async function fetchJson(url, config, { allowNotFound = false } = {}) {
 async function resolveReference(input, config) {
   const expected = normaliseReference(input.reference);
   if (!expected) throw new Error('missing_reference');
-  const params = new URLSearchParams({ query: String(input.reference).trim() });
-  const data = await fetchJson(`${SEARCH_URL}?${params}`, config);
-  const match = (data?.results || []).find((row) => normaliseReference(row?.reference) === expected);
-  if (!Number.isInteger(match?.id)) throw new Error('reference_not_found');
-  return match.id;
+
+  const sourceUrlId = String(input.source_url || '').match(/\/application-details\/(\d+)/)?.[1];
+  if (sourceUrlId && Number.isInteger(Number(sourceUrlId))) return Number(sourceUrlId);
+
+  const directParams = new URLSearchParams({ query: String(input.reference).trim() });
+  const direct = await fetchJson(`${SEARCH_URL}?${directParams}`, config);
+  const directMatch = (direct?.results || []).find((row) => normaliseReference(row?.reference) === expected);
+  if (Number.isInteger(directMatch?.id)) return directMatch.id;
+
+  const registrationDate = String(input.registration_date || '').slice(0, 10);
+  if (registrationDate) {
+    for (const status of SEARCH_STATUSES) {
+      const params = new URLSearchParams({
+        registrationDateFrom: `${registrationDate}T00:00:00Z`,
+        registrationDateTo: `${registrationDate}T23:59:59Z`,
+        status,
+      });
+      const data = await fetchJson(`${SEARCH_URL}?${params}`, config);
+      const match = (data?.results || []).find((row) => normaliseReference(row?.reference) === expected);
+      if (Number.isInteger(match?.id)) return match.id;
+    }
+  }
+
+  throw new Error('reference_not_found');
 }
 
 async function loadProposal(input, config) {
@@ -117,7 +137,8 @@ const byAuthority = {};
 
 try {
   // Older runs sent DLR/Fingal through the generic worker and used stale Wexford detail IDs.
-  // Re-open only those known legacy failures so the reference-resolving path can repair them.
+  // Re-open those known failures. reference_not_found is retried only a few times so genuinely
+  // unavailable historical records do not churn forever.
   const recovered = await client.query(`
     update work_items
     set status='pending', available_at=now(), completed_at=null, last_error=null, updated_at=now()
@@ -127,8 +148,9 @@ try {
       and (
         (input->>'local_authority_code' in ('DLR','FINGAL') and coalesce(last_error,'')='unsupported_authority')
         or (input->>'local_authority_code'='WEXFORD' and coalesce(last_error,'')='HTTP 404')
+        or (input->>'local_authority_code' = any($1::text[]) and coalesce(last_error,'')='reference_not_found' and attempts < 4)
       )
-  `);
+  `, [SPECIAL_AUTHORITIES]);
   recoveredLegacy = recovered.rowCount || 0;
 
   while (timeRemaining()) {
