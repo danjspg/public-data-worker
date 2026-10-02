@@ -11,6 +11,7 @@ const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPT
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const WEXFORD_LIST_ROOT = 'https://www.wexfordcoco.ie/planning/planning-applications/planning-lists';
+const WEXFORD_PDF_RECORD_VERSION = 2;
 const SEARCH_STATUSES = ['registered','determined'];
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const SPECIAL_AUTHORITIES = ['DLR','FINGAL','WEXFORD'];
@@ -185,16 +186,28 @@ function extractWexfordProposal(text, reference) {
   const normalized = normaliseReference(reference);
   if (!normalized) return null;
   const base = normalized.endsWith('W') ? normalized.slice(0, -1) : normalized;
-  const refPattern = new RegExp(`(?:^|\\s)${escapeRegex(base)}W?(?=\\s)`, 'i');
+
+  // pdf-parse can collapse table-cell whitespace, so do not require spaces around the
+  // planning number. The full 8-digit reference remains specific enough to locate the row.
+  const refPattern = new RegExp(`${escapeRegex(base)}W?`, 'i');
   const refMatch = refPattern.exec(text);
   if (!refMatch) return null;
 
-  const tail = text.slice(refMatch.index, refMatch.index + 12000);
-  const proposalStart = tail.search(/Proposal\s*:/i);
-  if (proposalStart < 0) return null;
-  const proposalTail = tail.slice(proposalStart).replace(/^Proposal\s*:\s*/i, '');
-  const end = proposalTail.search(/\bEIA\s*Status\s*:/i);
-  const proposal = clean(end >= 0 ? proposalTail.slice(0, end) : proposalTail.slice(0, 5000));
+  const tail = text.slice(refMatch.index + refMatch[0].length, refMatch.index + 16000);
+  const proposalMarker = /Proposal\s*:\s*/i.exec(tail);
+  if (!proposalMarker) return null;
+  const proposalTail = tail.slice(proposalMarker.index + proposalMarker[0].length);
+
+  // Stop at the next table record, not simply at the end of the PDF. Requiring the next
+  // planning number to be followed by an application date avoids truncating legitimate
+  // references to older permissions inside the proposal itself.
+  const nextRecord = /\b(?:20\d{6}W?|EXD\d{5,})\s+(?:\d{1,2}\s+[A-Za-z]{3}\s+20\d{2}|\d{1,2}[/-]\d{1,2}[/-]20\d{2})\b/i.exec(proposalTail);
+  const totalMarker = /\bTotal\s+No\.?\s+of\b/i.exec(proposalTail);
+  const eiaMarker = /\bEIA\s*Status\s*:/i.exec(proposalTail);
+  const boundaries = [nextRecord?.index, totalMarker?.index, eiaMarker?.index]
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  const end = boundaries.length ? Math.min(...boundaries) : Math.min(proposalTail.length, 5000);
+  const proposal = clean(proposalTail.slice(0, end));
   return proposal || null;
 }
 
@@ -321,9 +334,24 @@ let completed = 0;
 let deferred = 0;
 let failed = 0;
 let recoveredLegacy = 0;
+let reprocessedPdf = 0;
 const byAuthority = {};
 
 try {
+  // Re-open any earlier Wexford PDF results produced before strict record boundaries were
+  // introduced. They are worker-only/unapplied rows, so this repairs them before publication.
+  const reprocess = await client.query(`
+    update work_items
+    set status='pending', result=null, completed_at=null, last_error=null,
+        available_at=now(), updated_at=now()
+    where job_type='planning_description'
+      and applied_at is null
+      and status='completed'
+      and result->>'source'='wexford_planning_list_pdf'
+      and coalesce(nullif(result->>'record_boundary_version','')::int,0) < $1
+  `, [WEXFORD_PDF_RECORD_VERSION]);
+  reprocessedPdf = reprocess.rowCount || 0;
+
   // Older runs sent DLR/Fingal through the generic worker and used stale Wexford detail IDs.
   // Re-open those known failures. The bounded attempt ceiling prevents genuinely unavailable
   // historical records from churning indefinitely after the corrected source paths are tried.
@@ -336,7 +364,7 @@ try {
       and (
         (input->>'local_authority_code' in ('DLR','FINGAL') and coalesce(last_error,'')='unsupported_authority')
         or (input->>'local_authority_code'='WEXFORD' and coalesce(last_error,'')='HTTP 404')
-        or (input->>'local_authority_code' = any($1::text[]) and coalesce(last_error,'') in ('reference_not_found','detail_not_found') and attempts < 8)
+        or (input->>'local_authority_code' = any($1::text[]) and coalesce(last_error,'') in ('reference_not_found','detail_not_found','bad XRef entry','Command token too long: 128') and attempts < 8)
       )
   `, [SPECIAL_AUTHORITIES]);
   recoveredLegacy = recovered.rowCount || 0;
@@ -388,6 +416,7 @@ try {
             resolved_by: source.resolvedBy || 'reference',
             detail_id: source.detailId ?? null,
             source_url: source.sourceUrl || null,
+            record_boundary_version: source.source === 'wexford_planning_list_pdf' ? WEXFORD_PDF_RECORD_VERSION : null,
           })]
         );
         completed += 1;
@@ -422,6 +451,7 @@ try {
   const stoppedForTime = remainingReady > 0 && !timeRemaining();
 
   console.log(JSON.stringify({
+    reprocessedPdf,
     recoveredLegacy,
     selected,
     completed,
