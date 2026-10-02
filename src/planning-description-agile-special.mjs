@@ -10,9 +10,11 @@ const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPT
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
+const SPECIAL_AUTHORITIES = ['DLR','FINGAL','WEXFORD'];
 const CONFIG = {
   DLR: { client: 'DLR' },
   FINGAL: { client: 'FG' },
+  WEXFORD: { client: 'WEXFORD' },
 };
 
 const startedAt = Date.now();
@@ -110,9 +112,25 @@ let selected = 0;
 let completed = 0;
 let deferred = 0;
 let failed = 0;
+let recoveredLegacy = 0;
 const byAuthority = {};
 
 try {
+  // Older runs sent DLR/Fingal through the generic worker and used stale Wexford detail IDs.
+  // Re-open only those known legacy failures so the reference-resolving path can repair them.
+  const recovered = await client.query(`
+    update work_items
+    set status='pending', available_at=now(), completed_at=null, last_error=null, updated_at=now()
+    where job_type='planning_description'
+      and applied_at is null
+      and status='failed'
+      and (
+        (input->>'local_authority_code' in ('DLR','FINGAL') and coalesce(last_error,'')='unsupported_authority')
+        or (input->>'local_authority_code'='WEXFORD' and coalesce(last_error,'')='HTTP 404')
+      )
+  `);
+  recoveredLegacy = recovered.rowCount || 0;
+
   while (timeRemaining()) {
     const { rows } = await client.query(`
       select id,input
@@ -121,10 +139,10 @@ try {
         and status='pending'
         and applied_at is null
         and available_at <= now()
-        and input->>'local_authority_code' in ('DLR','FINGAL')
+        and input->>'local_authority_code' = any($2::text[])
       order by coalesce((input->>'registration_date')::date, date '1900-01-01') desc, id
       limit $1
-    `, [CLAIM_LIMIT]);
+    `, [CLAIM_LIMIT, SPECIAL_AUTHORITIES]);
 
     if (!rows.length) break;
     selected += rows.length;
@@ -175,12 +193,13 @@ try {
       and status='pending'
       and applied_at is null
       and available_at <= now()
-      and input->>'local_authority_code' in ('DLR','FINGAL')
-  `);
+      and input->>'local_authority_code' = any($1::text[])
+  `, [SPECIAL_AUTHORITIES]);
   const remainingReady = Number(remainingRows[0]?.count || 0);
   const stoppedForTime = remainingReady > 0 && !timeRemaining();
 
   console.log(JSON.stringify({
+    recoveredLegacy,
     selected,
     completed,
     deferred,
