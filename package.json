@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "pg": "^8.13.3",
-    "@supabase/supabase-js": "^2.103.0"
+    "@supabase/supabase-js": "^2.103.0",
+    "pdf-parse": "1.1.1"
   }
 }
