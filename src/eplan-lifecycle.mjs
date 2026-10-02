@@ -15,10 +15,6 @@ const TRACKED_FIELDS = [
   'further_information_requested_date','further_information_received_date','withdrawal_date',
   'appeal_lodged_date','appeal_decision_date','expiry_date'
 ];
-const LIFECYCLE_FIELDS = new Set([
-  'status','decision_text','decision_date','final_grant_date','withdrawal_date',
-  'appeal_lodged_date','appeal_decision_date'
-]);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function comparable(value){return value===undefined||value===null||value===''?null:String(value).trim();}
 function statusComparable(value){
@@ -34,10 +30,55 @@ function lifecycleDelta(input,result){
   }
   return delta;
 }
+function normaliseSourceStatus(value){
+  const key=statusComparable(value);
+  if(!key)return 'unknown';
+  if(['pre validation','pre reg','unregistered application','validation'].includes(key))return 'pre_validation';
+  if(['new application','new application set up','registered','registered application','application registered','registration','complete application','valid'].includes(key))return 'registered';
+  if(['officer allocation','referral','consultee referral','assessment period','planner assignment','planner assessment','planners report','recommendation review','recommended decision','recommended decision entered','managers order','publication required','provisional recommendation','application under review','application under consideration','awaiting recommendation'].includes(key))return 'under_assessment';
+  if(['further information','further information requested','additional information','additional information requested','request additional information','ai requested','decision request a.i.','request ai approval','ai request approved','significant ai requested','clarification of ai requested','cai requested','additional information approval required','ai referral','cai consultees','sai referral','sai consultees'].includes(key))return 'further_information_requested';
+  if(['further information received','additional information received','ai received','cai received','ai not significant'].includes(key))return 'further_information_received';
+  if(['decision','decision made','decided','decided...','decision notice issued','decision issued','decision following a.i.','decision review','refused','refused application','permission refused','refuse permission','granted','grant','permission granted','grant permission','conditional','conditionally granted','granted (conditional)','granted (unconditional)'].includes(key))return 'decision_made';
+  if(['final grant','final grant review'].includes(key))return 'final_grant';
+  if(['appealed','appeal lodged','application appealed','application under appeal','appealed financial','decision appealed','leave to appeal','planner rpt to abp','planners report to acp','appeal report sent to abp','appeal comments due','file to acp'].includes(key))return 'appealed';
+  if(key==='appeal decided')return 'appeal_decided';
+  if(['withdrawn','application withdrawn','withdraw application','declare application withdrawn','declared withdrawn','planning application withdrawn','deemed withdrawal','deemed withdrawn','withdrawal of application on appeal'].includes(key))return 'withdrawn';
+  if(['invalid','invalid application','invalidate application','declare application invalid','invalid details sent to applicant','invalid site notice','invalid due to site notice','invalid case closed','incomplete application','incompleted app','incompleted','incompleted application'].includes(key))return 'invalid';
+  if(['finalised','application closed','application finalised','pac report & file closed','pac meeting & file closed','application archived'].includes(key))return 'finalised';
+  return 'unknown';
+}
+function decisionStatus(value){
+  const key=statusComparable(value);
+  if(!key||['n/a','null','no data'].includes(key))return 'unknown';
+  if(/\bwithdraw/.test(key))return 'withdrawn';
+  if(/\b(?:invalid|invalidate|incomplete|incompleted)\b/.test(key))return 'invalid';
+  if(key.includes('request additional information')||key.includes('additional information requested')||key.includes('clarification of additional information')||key.includes('request ai')||key.includes('req ai'))return 'further_information_requested';
+  if(/\b(?:grant|granted|refuse|refused|refusal|conditional|unconditional|approve|approved|approval)\b/.test(key))return 'decision_made';
+  return 'unknown';
+}
+function resolveSourceLifecycle(result){
+  const raw=normaliseSourceStatus(result?.status);
+  const decision=decisionStatus(result?.decision_text);
+  if(result?.appeal_decision_date)return 'appeal_decided';
+  if(['appeal_decided','appealed','withdrawn','invalid','final_grant'].includes(raw))return raw;
+  if(['withdrawn','invalid'].includes(decision))return decision;
+  if(raw==='finalised')return 'finalised';
+  if(result?.appeal_lodged_date)return 'appealed';
+  if(result?.withdrawal_date)return 'withdrawn';
+  if(result?.final_grant_date)return 'final_grant';
+  if(decision==='decision_made'||raw==='decision_made'||result?.decision_date)return 'decision_made';
+  if(raw==='under_assessment')return 'under_assessment';
+  if(result?.further_information_received_date)return 'further_information_received';
+  if(decision==='further_information_requested')return 'further_information_requested';
+  if(raw==='further_information_received')return 'further_information_received';
+  if(raw==='further_information_requested')return 'further_information_requested';
+  if(result?.further_information_requested_date)return 'further_information_requested';
+  return raw;
+}
 
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
-let processed = 0, completed = 0, deferred = 0, failed = 0, fieldChanges = 0, lifecycleChanges = 0, statusChanges = 0, stateRecorded = 0;
+let processed = 0, completed = 0, deferred = 0, failed = 0, fieldChanges = 0, lifecycleChanges = 0, rawStatusChanges = 0, stateRecorded = 0;
 let stoppedForTimeBudget = false;
 
 async function persistFetched(item,result){
@@ -54,11 +95,13 @@ async function persistFetched(item,result){
 
     const delta=result.ok ? lifecycleDelta(item.input,result) : {};
     const changeDetected=Object.keys(delta).length>0;
-    const lifecycleChangeDetected=Object.keys(delta).some((field)=>LIFECYCLE_FIELDS.has(field));
-    const statusChangeDetected=Object.hasOwn(delta,'status');
+    const sourceResolvedStatus=result.ok?resolveSourceLifecycle(result):null;
+    const previousResolvedStatus=comparable(item.input?.normalized_status);
+    const lifecycleChangeDetected=Boolean(sourceResolvedStatus&&sourceResolvedStatus!=='unknown'&&sourceResolvedStatus!==previousResolvedStatus);
+    const rawStatusChangeDetected=Object.hasOwn(delta,'status');
     const consumeInWorker=item.job_type==='eplan_active_lifecycle' && (!result.ok || !changeDetected);
     const checkedAt=new Date().toISOString();
-    const enrichedResult={...result,change_detected:changeDetected,lifecycle_change_detected:lifecycleChangeDetected,status_change_detected:statusChangeDetected,delta,checked_at:checkedAt,source_type:'eplan'};
+    const enrichedResult={...result,change_detected:changeDetected,lifecycle_change_detected:lifecycleChangeDetected,status_change_detected:lifecycleChangeDetected,raw_status_change_detected:rawStatusChangeDetected,source_resolved_status:sourceResolvedStatus,previous_normalized_status:previousResolvedStatus,delta,checked_at:checkedAt,source_type:'eplan'};
     await client.query('begin');
     try {
       await client.query(`
@@ -82,7 +125,9 @@ async function persistFetched(item,result){
               'authority',$7::text,
               'pending_prod_change',$3::boolean,
               'lifecycle_change_detected',$8::boolean,
-              'status_change_detected',$9::boolean
+              'status_change_detected',$8::boolean,
+              'source_resolved_status',$9::text,
+              'previous_normalized_status',$10::text
             ),now()
           )
           on conflict(job_family,application_key) do update
@@ -90,7 +135,7 @@ async function persistFetched(item,result){
               last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
               metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
               updated_at=now()
-        `,[String(item.input.application_id),checkedAt,changeDetected,result.ok,result.reason||null,item.input.reference||null,item.input.local_authority_code||null,lifecycleChangeDetected,statusChangeDetected]);
+        `,[String(item.input.application_id),checkedAt,changeDetected,result.ok,result.reason||null,item.input.reference||null,item.input.local_authority_code||null,lifecycleChangeDetected,sourceResolvedStatus,previousResolvedStatus]);
         stateRecorded += 1;
       }
       await client.query('commit');
@@ -101,7 +146,7 @@ async function persistFetched(item,result){
     completed += 1;
     if(changeDetected)fieldChanges += 1;
     if(lifecycleChangeDetected)lifecycleChanges += 1;
-    if(statusChangeDetected)statusChanges += 1;
+    if(rawStatusChangeDetected)rawStatusChanges += 1;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await client.query(`
@@ -146,7 +191,7 @@ try {
     for(let index=0;index<chunk.length;index++)await persistFetched(chunk[index],fetched[index]);
   }
 
-  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed:lifecycleChanges, lifecycleChanges, statusChanges, fieldChanges, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget }, null, 2));
+  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed:lifecycleChanges, lifecycleChanges, rawStatusChanges, fieldChanges, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
