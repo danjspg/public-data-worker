@@ -8,6 +8,8 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 const LIMIT = Math.max(1, Math.min(Number(process.env.EPLAN_WORKER_LIMIT || 12000), 12000));
 const CONCURRENCY = Math.max(1, Math.min(Number(process.env.EPLAN_WORKER_CONCURRENCY || 6), 8));
 const PACE_MS = Math.max(100, Number(process.env.EPLAN_WORKER_PACE_MS || 250));
+const TIME_BUDGET_MS = Math.max(60_000, Number(process.env.EPLAN_WORKER_TIME_BUDGET_MS || 70 * 60 * 1000));
+const startedAt = Date.now();
 const TRACKED_FIELDS = [
   'status','decision_text','valid_date','decision_date','decision_due_date','final_grant_date',
   'further_information_requested_date','further_information_received_date','withdrawal_date',
@@ -28,6 +30,7 @@ function lifecycleDelta(input,result){
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
 let processed = 0, completed = 0, deferred = 0, failed = 0, changed = 0, stateRecorded = 0;
+let stoppedForTimeBudget = false;
 
 async function persistFetched(item,result){
   try {
@@ -109,6 +112,11 @@ try {
   `, [LIMIT]);
 
   for(let offset=0;offset<rows.length;offset+=CONCURRENCY){
+    if (Date.now() - startedAt >= TIME_BUDGET_MS) {
+      stoppedForTimeBudget = true;
+      break;
+    }
+
     const chunk=rows.slice(offset,offset+CONCURRENCY);
     for(const item of chunk){
       processed += 1;
@@ -124,7 +132,7 @@ try {
     for(let index=0;index<chunk.length;index++)await persistFetched(chunk[index],fetched[index]);
   }
 
-  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS }, null, 2));
+  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
