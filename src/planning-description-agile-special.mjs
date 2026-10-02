@@ -22,7 +22,7 @@ const startedAt = Date.now();
 const timeRemaining = () => Date.now() - startedAt < MAX_RUNTIME_MS;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
-const normaliseReference = (value) => clean(value).replace(/\s+/g, '').toUpperCase();
+const normaliseReference = (value) => clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '');
 const headersFor = (config) => ({
   'User-Agent': 'Public records data worker',
   'x-client': config.client,
@@ -60,10 +60,7 @@ async function resolveReference(input, config) {
   const expected = normaliseReference(input.reference);
   if (!expected) throw new Error('missing_reference');
 
-  const sourceUrlId = String(input.source_url || '').match(/\/application-details\/(\d+)/)?.[1];
-  if (sourceUrlId && Number.isInteger(Number(sourceUrlId))) return Number(sourceUrlId);
-
-  const directParams = new URLSearchParams({ query: String(input.reference).trim() });
+  const directParams = new URLSearchParams({ reference: String(input.reference).trim() });
   const direct = await fetchJson(`${SEARCH_URL}?${directParams}`, config);
   const directMatch = (direct?.results || []).find((row) => normaliseReference(row?.reference) === expected);
   if (Number.isInteger(directMatch?.id)) return directMatch.id;
@@ -87,6 +84,20 @@ async function resolveReference(input, config) {
 
 async function loadProposal(input, config) {
   const expected = normaliseReference(input.reference);
+
+  // Some Wexford canonical rows carry a Citizen Portal route id which is not a stable API id.
+  // Try it opportunistically, but fall back to an exact API reference lookup when it 404s.
+  const sourceUrlId = String(input.source_url || '').match(/\/application-details\/(\d+)/)?.[1];
+  if (sourceUrlId && Number.isInteger(Number(sourceUrlId))) {
+    const routeDetail = await fetchJson(`${DETAIL_URL}/${Number(sourceUrlId)}`, config, { allowNotFound: true });
+    if (routeDetail && normaliseReference(routeDetail.reference) === expected) {
+      return {
+        proposal: clean(routeDetail.fullProposal) || null,
+        detailId: Number(sourceUrlId),
+      };
+    }
+  }
+
   const detailId = await resolveReference(input, config);
   const detail = await fetchJson(`${DETAIL_URL}/${detailId}`, config, { allowNotFound: true });
   if (!detail) throw new Error('detail_not_found');
@@ -137,8 +148,8 @@ const byAuthority = {};
 
 try {
   // Older runs sent DLR/Fingal through the generic worker and used stale Wexford detail IDs.
-  // Re-open those known failures. reference_not_found is retried only a few times so genuinely
-  // unavailable historical records do not churn forever.
+  // Re-open those known failures. Corrected lookup failures are retried only a few times so
+  // genuinely unavailable historical records do not churn forever.
   const recovered = await client.query(`
     update work_items
     set status='pending', available_at=now(), completed_at=null, last_error=null, updated_at=now()
@@ -148,7 +159,7 @@ try {
       and (
         (input->>'local_authority_code' in ('DLR','FINGAL') and coalesce(last_error,'')='unsupported_authority')
         or (input->>'local_authority_code'='WEXFORD' and coalesce(last_error,'')='HTTP 404')
-        or (input->>'local_authority_code' = any($1::text[]) and coalesce(last_error,'')='reference_not_found' and attempts < 4)
+        or (input->>'local_authority_code' = any($1::text[]) and coalesce(last_error,'') in ('reference_not_found','detail_not_found') and attempts < 5)
       )
   `, [SPECIAL_AUTHORITIES]);
   recoveredLegacy = recovered.rowCount || 0;
