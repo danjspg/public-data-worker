@@ -9,6 +9,7 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 const CLAIM_LIMIT = Math.max(1, Math.min(Number(process.env.DESCRIPTION_WORKER_LIMIT || 400), 1000));
 const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPTION_WORKER_MAX_RUNTIME_MS || 120 * 60_000), 180 * 60_000));
 const AGILE_CONCURRENCY = Math.max(1, Math.min(Number(process.env.DESCRIPTION_AGILE_CONCURRENCY || 2), 8));
+const SPECIAL_AGILE_AUTHORITIES = ['DLR','FINGAL','WEXFORD'];
 const startedAt = Date.now();
 const timeRemaining = () => Date.now() - startedAt < MAX_RUNTIME_MS;
 
@@ -17,7 +18,6 @@ const AGILE_DETAIL = 'https://planningapi.agileapplications.ie/api/application';
 const AGILE = {
   CORKCOCO:{ client:'CORKCOCO', tenant:'corkcoco' },
   CORKCITY:{ client:'CORKCITY', tenant:'corkcity' },
-  WEXFORD:{ client:'WEXFORD', tenant:'wexford', detailIdFromSourceUrl:true },
 };
 const SOURCE_NAMES = {
   DUBLINCITY:'Dublin City Council', SOUTHDUBLIN:'South Dublin County Council', KILDARE:'Kildare County Council',
@@ -69,10 +69,6 @@ async function fetchJson(url, headers={}) {
 }
 
 function agileId(config,input){
-  if(config.detailIdFromSourceUrl){
-    const m=String(input.source_url||'').match(/\/application-details\/(\d+)/);
-    if(m) return Number(m[1]);
-  }
   const n=Number(input.source_application_id);
   return Number.isInteger(n)?n:null;
 }
@@ -183,9 +179,10 @@ try {
         and status='pending'
         and applied_at is null
         and available_at<=now()
+        and not (coalesce(input->>'local_authority_code','') = any($2::text[]))
       order by id
       limit $1
-    `, [CLAIM_LIMIT]);
+    `, [CLAIM_LIMIT, SPECIAL_AGILE_AUTHORITIES]);
 
     if (!rows.length) break;
     claimBatches++;
