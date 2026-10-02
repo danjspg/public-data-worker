@@ -11,7 +11,7 @@ const MAX_RUNTIME_MS = Math.max(5 * 60_000, Math.min(Number(process.env.DESCRIPT
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const WEXFORD_LIST_ROOT = 'https://www.wexfordcoco.ie/planning/planning-applications/planning-lists';
-const WEXFORD_PDF_RECORD_VERSION = 2;
+const WEXFORD_PDF_RECORD_VERSION = 3;
 const SEARCH_STATUSES = ['registered','determined'];
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const SPECIAL_AUTHORITIES = ['DLR','FINGAL','WEXFORD'];
@@ -198,10 +198,11 @@ function extractWexfordProposal(text, reference) {
   if (!proposalMarker) return null;
   const proposalTail = tail.slice(proposalMarker.index + proposalMarker[0].length);
 
-  // Stop at the next table record, not simply at the end of the PDF. Requiring the next
-  // planning number to be followed by an application date avoids truncating legitimate
-  // references to older permissions inside the proposal itself.
-  const nextRecord = /\b(?:20\d{6}W?|EXD\d{5,})\s+(?:\d{1,2}\s+[A-Za-z]{3}\s+20\d{2}|\d{1,2}[/-]\d{1,2}[/-]20\d{2})\b/i.exec(proposalTail);
+  // Stop at the next table record, not simply at the end of the PDF. pdf-parse sometimes
+  // collapses the planning-number and date cells completely (20260136W05 Feb 2026), so zero
+  // whitespace is permitted there. A planning reference in prose will not match unless it is
+  // immediately followed by an application-date shape.
+  const nextRecord = /\b(?:20\d{6}W?|EXD\d{5,})\s*(?:\d{1,2}\s+[A-Za-z]{3}\s+20\d{2}|\d{1,2}[/-]\d{1,2}[/-]20\d{2})/i.exec(proposalTail);
   const totalMarker = /\bTotal\s+No\.?\s+of\b/i.exec(proposalTail);
   const eiaMarker = /\bEIA\s*Status\s*:/i.exec(proposalTail);
   const boundaries = [nextRecord?.index, totalMarker?.index, eiaMarker?.index]
@@ -464,8 +465,6 @@ try {
     byAuthority,
   }, null, 2));
 
-  // A non-empty backlog after the bounded runtime is normal catch-up progress, not a job failure.
-  // Only fail the workflow when there is a meaningful permanent-error rate.
   if (failed > Math.max(25, Math.floor(selected * 0.1))) process.exitCode = 1;
 } finally {
   await client.end().catch(() => {});
