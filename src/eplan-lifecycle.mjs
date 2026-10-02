@@ -15,13 +15,21 @@ const TRACKED_FIELDS = [
   'further_information_requested_date','further_information_received_date','withdrawal_date',
   'appeal_lodged_date','appeal_decision_date','expiry_date'
 ];
+const LIFECYCLE_FIELDS = new Set([
+  'status','decision_text','decision_date','final_grant_date','withdrawal_date',
+  'appeal_lodged_date','appeal_decision_date'
+]);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function comparable(value){return value===undefined||value===null||value===''?null:String(value).trim();}
+function statusComparable(value){
+  const comparableValue=comparable(value);
+  return comparableValue===null?null:comparableValue.normalize('NFKC').toLowerCase().replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim();
+}
 function lifecycleDelta(input,result){
   const delta={};
   for(const field of TRACKED_FIELDS){
-    const incoming=comparable(result?.[field]);
-    const existing=comparable(input?.[field]);
+    const incoming=field==='status'?statusComparable(result?.[field]):comparable(result?.[field]);
+    const existing=field==='status'?statusComparable(input?.[field]):comparable(input?.[field]);
     if(incoming!==null&&incoming!==existing)delta[field]=result[field];
   }
   return delta;
@@ -29,7 +37,7 @@ function lifecycleDelta(input,result){
 
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
-let processed = 0, completed = 0, deferred = 0, failed = 0, changed = 0, stateRecorded = 0;
+let processed = 0, completed = 0, deferred = 0, failed = 0, fieldChanges = 0, lifecycleChanges = 0, statusChanges = 0, stateRecorded = 0;
 let stoppedForTimeBudget = false;
 
 async function persistFetched(item,result){
@@ -46,9 +54,11 @@ async function persistFetched(item,result){
 
     const delta=result.ok ? lifecycleDelta(item.input,result) : {};
     const changeDetected=Object.keys(delta).length>0;
+    const lifecycleChangeDetected=Object.keys(delta).some((field)=>LIFECYCLE_FIELDS.has(field));
+    const statusChangeDetected=Object.hasOwn(delta,'status');
     const consumeInWorker=item.job_type==='eplan_active_lifecycle' && (!result.ok || !changeDetected);
     const checkedAt=new Date().toISOString();
-    const enrichedResult={...result,change_detected:changeDetected,delta,checked_at:checkedAt,source_type:'eplan'};
+    const enrichedResult={...result,change_detected:changeDetected,lifecycle_change_detected:lifecycleChangeDetected,status_change_detected:statusChangeDetected,delta,checked_at:checkedAt,source_type:'eplan'};
     await client.query('begin');
     try {
       await client.query(`
@@ -70,7 +80,9 @@ async function persistFetched(item,result){
               'last_source_error',case when $4 then null else $5::text end,
               'reference',$6::text,
               'authority',$7::text,
-              'pending_prod_change',$3::boolean
+              'pending_prod_change',$3::boolean,
+              'lifecycle_change_detected',$8::boolean,
+              'status_change_detected',$9::boolean
             ),now()
           )
           on conflict(job_family,application_key) do update
@@ -78,7 +90,7 @@ async function persistFetched(item,result){
               last_seen_change_at=case when $3 then excluded.last_checked_at else source_sync_state.last_seen_change_at end,
               metadata=coalesce(source_sync_state.metadata,'{}'::jsonb)||excluded.metadata,
               updated_at=now()
-        `,[String(item.input.application_id),checkedAt,changeDetected,result.ok,result.reason||null,item.input.reference||null,item.input.local_authority_code||null]);
+        `,[String(item.input.application_id),checkedAt,changeDetected,result.ok,result.reason||null,item.input.reference||null,item.input.local_authority_code||null,lifecycleChangeDetected,statusChangeDetected]);
         stateRecorded += 1;
       }
       await client.query('commit');
@@ -87,7 +99,9 @@ async function persistFetched(item,result){
       throw stateError;
     }
     completed += 1;
-    if(changeDetected)changed += 1;
+    if(changeDetected)fieldChanges += 1;
+    if(lifecycleChangeDetected)lifecycleChanges += 1;
+    if(statusChangeDetected)statusChanges += 1;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await client.query(`
@@ -132,7 +146,7 @@ try {
     for(let index=0;index<chunk.length;index++)await persistFetched(chunk[index],fetched[index]);
   }
 
-  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget }, null, 2));
+  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed:lifecycleChanges, lifecycleChanges, statusChanges, fieldChanges, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
