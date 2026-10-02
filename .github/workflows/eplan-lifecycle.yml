@@ -10,8 +10,7 @@ on:
       - "src/planning-source-registry.mjs"
       - "package.json"
   schedule:
-    - cron: "15 3 * * *"
-    - cron: "20 18 * * *"
+    - cron: "15 0,6,12,18 * * *"
   workflow_dispatch:
 
 permissions:
@@ -44,4 +43,4 @@ jobs:
         run: npm run work:eplan-lifecycle
 
 # Public source fetching is isolated here; production writes remain private.
-# 18:20 UTC handles the daily queue; 03:15 UTC is the retry/drain safety pass.
+# Four evenly spaced daily passes keep the active ePlan cohort fresh while preserving source concurrency at 6.
