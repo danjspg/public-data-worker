@@ -211,9 +211,14 @@ async function wexfordPlanningListProposal(input) {
     .sort((a, b) => a.endDate - b.endDate);
 
   for (const { url } of candidates) {
-    const text = await pdfText(url);
-    const proposal = extractWexfordProposal(text, input.reference);
-    if (proposal) return { proposal, sourceUrl: url };
+    try {
+      const text = await pdfText(url);
+      const proposal = extractWexfordProposal(text, input.reference);
+      if (proposal) return { proposal, sourceUrl: url };
+    } catch {
+      // Some historical council PDFs have malformed xref/token structures. A bad sibling
+      // list must not block trying the valid/invalid/site-notice alternatives for that week.
+    }
   }
   return null;
 }
@@ -221,18 +226,40 @@ async function wexfordPlanningListProposal(input) {
 async function loadProposal(input, config) {
   const expected = normaliseReference(input.reference);
 
-  // Some Wexford canonical rows carry a Citizen Portal route id which is not a stable API id.
-  // Try it opportunistically, but never trust it unless the returned reference matches exactly.
+  // Wexford's council planning lists are the most stable authoritative description source.
+  // Prefer them before touching legacy Citizen Portal route IDs, which can 404 or rate-limit.
+  let wexfordListError = null;
+  if (config.client === 'WEXFORD') {
+    try {
+      const councilList = await wexfordPlanningListProposal(input);
+      if (councilList) {
+        return {
+          proposal: councilList.proposal,
+          detailId: null,
+          source: 'wexford_planning_list_pdf',
+          resolvedBy: 'registration_week',
+          sourceUrl: councilList.sourceUrl,
+        };
+      }
+    } catch (error) {
+      wexfordListError = error;
+    }
+  }
+
   const sourceUrlId = String(input.source_url || '').match(/\/application-details\/(\d+)/)?.[1];
   if (sourceUrlId && Number.isInteger(Number(sourceUrlId))) {
-    const routeDetail = await fetchJson(`${DETAIL_URL}/${Number(sourceUrlId)}`, config, { allowNotFound: true });
-    if (routeDetail && normaliseReference(routeDetail.reference) === expected) {
-      return {
-        proposal: clean(routeDetail.fullProposal) || null,
-        detailId: Number(sourceUrlId),
-        source: 'agile_detail',
-        resolvedBy: 'portal_route_id',
-      };
+    try {
+      const routeDetail = await fetchJson(`${DETAIL_URL}/${Number(sourceUrlId)}`, config, { allowNotFound: true });
+      if (routeDetail && normaliseReference(routeDetail.reference) === expected) {
+        return {
+          proposal: clean(routeDetail.fullProposal) || null,
+          detailId: Number(sourceUrlId),
+          source: 'agile_detail',
+          resolvedBy: 'portal_route_id',
+        };
+      }
+    } catch (error) {
+      if (config.client !== 'WEXFORD') throw error;
     }
   }
 
@@ -252,20 +279,10 @@ async function loadProposal(input, config) {
     apiError = error;
   }
 
-  if (config.client === 'WEXFORD') {
-    const councilList = await wexfordPlanningListProposal(input);
-    if (councilList) {
-      return {
-        proposal: councilList.proposal,
-        detailId: null,
-        source: 'wexford_planning_list_pdf',
-        resolvedBy: 'registration_week',
-        sourceUrl: councilList.sourceUrl,
-      };
-    }
+  if (wexfordListError && isTransient(wexfordListError instanceof Error ? wexfordListError.message : String(wexfordListError))) {
+    throw wexfordListError;
   }
-
-  throw apiError || new Error('reference_not_found');
+  throw apiError || wexfordListError || new Error('reference_not_found');
 }
 
 async function deferItem(client, itemId, message) {
@@ -323,6 +340,18 @@ try {
       )
   `, [SPECIAL_AUTHORITIES]);
   recoveredLegacy = recovered.rowCount || 0;
+
+  // A prior Agile-first run may have deferred Wexford on HTTP 429 before reaching the council-list
+  // source. The corrected list-first path can safely retry those rows immediately.
+  await client.query(`
+    update work_items
+    set available_at=now(), last_error=null, updated_at=now()
+    where job_type='planning_description'
+      and applied_at is null
+      and status='pending'
+      and input->>'local_authority_code'='WEXFORD'
+      and coalesce(last_error,'')='HTTP 429'
+  `);
 
   while (timeRemaining()) {
     const { rows } = await client.query(`
