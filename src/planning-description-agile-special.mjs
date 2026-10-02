@@ -1,5 +1,5 @@
 import pg from 'pg';
-import pdfParse from 'pdf-parse';
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 
 const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
