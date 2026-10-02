@@ -21,6 +21,8 @@ const recurringJobTypes = [
 
 const db = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 
+// Keep only compact lifecycle observations until the daily report has assessed its cohort.
+// Worker-consumed no-change timestamps must not be mistaken for production writes.
 async function compactAppliedPayloads() {
   let compacted = 0;
   while (compacted < maxRows) {
@@ -32,12 +34,19 @@ async function compactAppliedPayloads() {
          where applied_at is not null
            and applied_at < now() - make_interval(hours => $1::int)
            and (result is not null or input <> '{}'::jsonb or last_error is not null)
+           and coalesce(result->>'lifecycle_observation_compacted','false') != 'true'
          order by applied_at, id
          limit $2
        )
        update work_items w
-       set input='{}'::jsonb,
-           result=null,
+       set input=case when w.job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle') and w.result ? 'checked_at'
+             then jsonb_build_object('application_id',w.input->>'application_id') else '{}'::jsonb end,
+           result=case when w.job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle') and w.result ? 'checked_at' then
+             (select coalesce(jsonb_object_agg(key,value),'{}'::jsonb) from jsonb_each(w.result)
+               where key in ('checked_at','ok','found','change_detected','baseline_missing','superseded',
+                 'delta','production_outcome_version','production_lifecycle_changed','production_updated','production_changed_fields'))
+             || '{"lifecycle_observation_compacted":true}'::jsonb
+             else null end,
            last_error=null,
            updated_at=now()
        from targets t
@@ -60,7 +69,8 @@ async function deleteOldRecurringTombstones() {
          select id
          from work_items
          where applied_at is not null
-           and applied_at < now() - make_interval(days => $1::int)
+           and applied_at < now() - make_interval(days =>
+             case when job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle') then greatest($1::int,3) else $1::int end)
            and job_type = any($2::text[])
          order by applied_at, id
          limit $3
