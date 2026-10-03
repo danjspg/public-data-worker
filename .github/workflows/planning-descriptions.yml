@@ -40,7 +40,8 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
         run: node src/retry-transient.mjs
-      - name: Resolve DLR and Fingal proposals from Agile into worker DB
+      - name: Resolve DLR, Fingal and Wexford proposals into worker DB
+        continue-on-error: true
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           DESCRIPTION_SPECIAL_WORKER_LIMIT: "500"
