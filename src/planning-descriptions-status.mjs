@@ -19,7 +19,14 @@ try {
         where status='completed' and applied_at is null
           and coalesce(nullif(btrim(result->>'proposal'),''),'') = ''
       )::int as completed_without_proposal_waiting,
-      count(*) filter (where status='failed' and applied_at is null)::int as failed,
+      count(*) filter (
+        where status='failed' and applied_at is null
+          and coalesce(last_error,'') not like 'unresolved:%'
+      )::int as failed,
+      count(*) filter (
+        where status='failed' and applied_at is null
+          and coalesce(last_error,'') like 'unresolved:%'
+      )::int as unresolved,
       count(*) filter (where status='pending' and applied_at is null)::int as pending,
       count(*) filter (where status='pending' and applied_at is null and available_at<=now())::int as pending_ready,
       count(*) filter (where status='pending' and applied_at is null and available_at>now())::int as pending_deferred
@@ -82,6 +89,22 @@ try {
     where job_type='planning_description'
       and status='failed'
       and applied_at is null
+      and coalesce(last_error,'') not like 'unresolved:%'
+    group by 1,2
+    order by count(*) desc, authority, reason
+    limit 50
+  `);
+
+  const { rows: unresolvedRows } = await client.query(`
+    select
+      coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
+      coalesce(nullif(last_error,''),'unknown') as reason,
+      count(*)::int as count
+    from work_items
+    where job_type='planning_description'
+      and status='failed'
+      and applied_at is null
+      and coalesce(last_error,'') like 'unresolved:%'
     group by 1,2
     order by count(*) desc, authority, reason
     limit 50
@@ -157,6 +180,7 @@ try {
     pendingByAuthority:pendingByAuthorityRows,
     pendingReasons:pendingReasonRows,
     failuresByAuthority:failureRows,
+    unresolvedByAuthority:unresolvedRows,
     professionals:{
       summary:{
         ...(professionalSummaryRows[0] || {}),
