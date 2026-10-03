@@ -23,61 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  diagnose:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - run: npm install --no-audit --no-fund
-      - name: Summarise specialist description failures
-        env:
-          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-        run: |
-          node --input-type=module <<'NODE'
-          import pg from 'pg';
-          const { Client } = pg;
-          const client = new Client({ connectionString: process.env.WORKER_DATABASE_URL, ssl: { rejectUnauthorized: false } });
-          await client.connect();
-          try {
-            const { rows: failures } = await client.query(`
-              select
-                coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
-                coalesce(nullif(last_error,''),'unknown') as reason,
-                count(*)::int as count
-              from work_items
-              where job_type='planning_description'
-                and applied_at is null
-                and status='failed'
-                and input->>'local_authority_code' in ('DLR','FINGAL','WEXFORD')
-              group by 1,2
-              order by count(*) desc, authority, reason
-              limit 50
-            `);
-            const { rows: pending } = await client.query(`
-              select
-                coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
-                coalesce(nullif(last_error,''),'none') as reason,
-                count(*)::int as count
-              from work_items
-              where job_type='planning_description'
-                and applied_at is null
-                and status='pending'
-                and input->>'local_authority_code' in ('DLR','FINGAL','WEXFORD')
-              group by 1,2
-              order by count(*) desc, authority, reason
-              limit 50
-            `);
-            console.log(JSON.stringify({ specialistFailures: failures, specialistPending: pending }, null, 2));
-          } finally {
-            await client.end();
-          }
-          NODE
-
   process:
-    needs: diagnose
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
@@ -95,6 +41,7 @@ jobs:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
         run: node src/retry-transient.mjs
       - name: Resolve DLR, Fingal and Wexford proposals into worker DB
+        id: specialist
         continue-on-error: true
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
@@ -102,6 +49,65 @@ jobs:
           DESCRIPTION_SPECIAL_AGILE_CONCURRENCY: "2"
           DESCRIPTION_SPECIAL_MAX_RUNTIME_MS: "2100000"
         run: node src/planning-description-agile-special.mjs
+      - name: Classify specialist source misses
+        id: classify_specialist
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import pg from 'pg';
+          const { Client } = pg;
+          const client = new Client({ connectionString: process.env.WORKER_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+          await client.connect();
+          try {
+            const retry = await client.query(`
+              update work_items
+              set status='pending',
+                  last_error='unresolved_retry:' || last_error,
+                  available_at=now() + interval '30 minutes',
+                  completed_at=null,
+                  updated_at=now()
+              where job_type='planning_description'
+                and applied_at is null
+                and status='failed'
+                and input->>'local_authority_code' in ('DLR','FINGAL','WEXFORD')
+                and last_error in ('reference_not_found','detail_not_found')
+                and attempts < 3
+              returning id
+            `);
+            const terminal = await client.query(`
+              update work_items
+              set last_error='unresolved:' || last_error,
+                  updated_at=now()
+              where job_type='planning_description'
+                and applied_at is null
+                and status='failed'
+                and input->>'local_authority_code' in ('DLR','FINGAL','WEXFORD')
+                and last_error in ('reference_not_found','detail_not_found')
+                and attempts >= 3
+              returning id
+            `);
+            const { rows } = await client.query(`
+              select count(*)::int as count
+              from work_items
+              where job_type='planning_description'
+                and applied_at is null
+                and status='failed'
+                and input->>'local_authority_code' in ('DLR','FINGAL','WEXFORD')
+                and coalesce(last_error,'') not like 'unresolved:%'
+            `);
+            const operationalFailures = Number(rows[0]?.count || 0);
+            const unresolvedRetry = retry.rowCount || 0;
+            const unresolvedTerminal = terminal.rowCount || 0;
+            const classifiedTotal = unresolvedRetry + unresolvedTerminal;
+            console.log(JSON.stringify({ operationalFailures, unresolvedRetry, unresolvedTerminal }, null, 2));
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `operational_failures=${operationalFailures}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `classified_total=${classifiedTotal}\n`);
+          } finally {
+            await client.end();
+          }
+          NODE
       - name: Process remaining queued description repairs
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
@@ -109,3 +115,8 @@ jobs:
           DESCRIPTION_WORKER_MAX_RUNTIME_MS: "900000"
           DESCRIPTION_AGILE_CONCURRENCY: "2"
         run: npm run work:planning-descriptions
+      - name: Surface specialist operational failure
+        if: ${{ steps.specialist.outcome == 'failure' && (steps.classify_specialist.outputs.operational_failures != '0' || steps.classify_specialist.outputs.classified_total == '0') }}
+        run: |
+          echo "Specialist description worker had an operational failure after expected source misses were separated."
+          exit 1
