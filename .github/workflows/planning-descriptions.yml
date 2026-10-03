@@ -23,7 +23,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Summarise specialist description failures
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const { Client } = pg;
+          const client = new Client({ connectionString: process.env.WORKER_DATABASE_URL, ssl: { rejectUnauthorized: false } });
+          await client.connect();
+          try {
+            const { rows: failures } = await client.query(`
+              select
+                coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
+                coalesce(nullif(last_error,''),'unknown') as reason,
+                count(*)::int as count
+              from work_items
+              where job_type='planning_description'
+                and applied_at is null
+                and status='failed'
+                and input->>'local_authority_code' in ('DLR','FINGAL','WEXFORD')
+              group by 1,2
+              order by count(*) desc, authority, reason
+              limit 50
+            `);
+            const { rows: pending } = await client.query(`
+              select
+                coalesce(nullif(input->>'local_authority_code',''),'unknown') as authority,
+                coalesce(nullif(last_error,''),'none') as reason,
+                count(*)::int as count
+              from work_items
+              where job_type='planning_description'
+                and applied_at is null
+                and status='pending'
+                and input->>'local_authority_code' in ('DLR','FINGAL','WEXFORD')
+              group by 1,2
+              order by count(*) desc, authority, reason
+              limit 50
+            `);
+            console.log(JSON.stringify({ specialistFailures: failures, specialistPending: pending }, null, 2));
+          } finally {
+            await client.end();
+          }
+          NODE
+
   process:
+    needs: diagnose
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
