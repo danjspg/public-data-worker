@@ -7,6 +7,8 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
 const LIMIT = Math.max(1, Math.min(Number(process.env.ACTIVE_AGILE_WORKER_LIMIT || 1000), 5000));
 const CONCURRENCY = Math.max(1, Math.min(Number(process.env.ACTIVE_AGILE_CONCURRENCY || 6), 8));
+const TIME_BUDGET_MS = Math.max(60_000, Number(process.env.ACTIVE_AGILE_TIME_BUDGET_MS || 50 * 60 * 1000));
+const startedAt = Date.now();
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
@@ -113,6 +115,7 @@ async function prepareItem(item) {
 const client = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
 await client.connect();
 let selected = 0, completed = 0, missing = 0, deferred = 0, resolvedByReference=0, remappedIds=0;
+let stoppedForTimeBudget = false;
 try {
   const { rows } = await client.query(`
     select i.id,i.input,
@@ -133,6 +136,10 @@ try {
   selected = rows.length;
 
   for (let offset=0; offset<rows.length; offset+=CONCURRENCY) {
+    if (Date.now() - startedAt >= TIME_BUDGET_MS) {
+      stoppedForTimeBudget = true;
+      break;
+    }
     const prepared = await Promise.all(rows.slice(offset,offset+CONCURRENCY).map(prepareItem));
     for (const work of prepared) {
       const item=work.item;
@@ -187,7 +194,7 @@ try {
     }
     if(offset+CONCURRENCY<rows.length)await sleep(150);
   }
-  console.log(JSON.stringify({ selected, completed, missing, deferred, resolvedByReference, remappedIds, concurrency:CONCURRENCY }, null, 2));
+  console.log(JSON.stringify({ selected, completed, missing, deferred, resolvedByReference, remappedIds, concurrency:CONCURRENCY, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
