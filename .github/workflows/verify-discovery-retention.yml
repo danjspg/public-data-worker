@@ -1,0 +1,24 @@
+name: Verify retained discovery observations
+
+on:
+  pull_request:
+    paths:
+      - "src/prune-worker-history.mjs"
+      - "src/current-appeals.mjs"
+      - "tests/discovery-retention.test.mjs"
+      - ".github/workflows/verify-discovery-retention.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check src/prune-worker-history.mjs && node --check src/current-appeals.mjs
+      - run: node --test tests/discovery-retention.test.mjs

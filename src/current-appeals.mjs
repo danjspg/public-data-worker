@@ -125,7 +125,7 @@ async function stageCases(client, cases, refs) {
     const batch=sourceBatch.map((row)=>{
       const prior=previousByKey.get(row.work_key);
       const sourceSignature=appealSignature(row.baseResult);
-      const previousSignature=appealSignature(prior?.result);
+      const previousSignature=prior?.result?.source_signature || appealSignature(prior?.result);
       const changeDetected=!prior?.applied_at || !sourceSignature || !previousSignature || sourceSignature!==previousSignature;
       if(changeDetected) changesStaged += 1; else unchangedChecked += 1;
       return {
