@@ -1,0 +1,10 @@
+import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
+import test from "node:test"
+test("recent discovery keeps three days of compact cohort identity",async()=>{
+ const code=await readFile(new URL("../src/prune-worker-history.mjs",import.meta.url),"utf8")
+ assert.ok(code.includes("active_planning_recent_range') then greatest($1::int,3)"))
+ for(const field of ["local_authority_code","queued_for_date","source_policy_version","source_type","fallback","ok"])
+  assert.ok(code.includes(field),`missing retained cohort field ${field}`)
+ assert.ok(code.includes("lifecycle_observation_compacted"))
+})
