@@ -39,13 +39,26 @@ async function compactAppliedPayloads() {
          limit $2
        )
        update work_items w
-       set input=case when w.job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle') and w.result ? 'checked_at'
+       set input=case when w.job_type='active_planning_recent_range' then
+             jsonb_build_object(
+               'local_authority_code',w.input->>'local_authority_code',
+               'queued_for_date',w.input->>'queued_for_date',
+               'source_policy_version',w.input->>'source_policy_version'
+             )
+             when w.job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle') and w.result ? 'checked_at'
              then jsonb_build_object('application_id',w.input->>'application_id') else '{}'::jsonb end,
            result=case when w.job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle') and w.result ? 'checked_at' then
              (select coalesce(jsonb_object_agg(key,value),'{}'::jsonb) from jsonb_each(w.result)
                where key in ('checked_at','ok','found','change_detected','baseline_missing','superseded',
                  'delta','production_outcome_version','production_lifecycle_changed','production_updated','production_changed_fields'))
              || '{"lifecycle_observation_compacted":true}'::jsonb
+             when w.job_type='active_planning_recent_range' then
+             jsonb_build_object(
+               'ok',w.result->'ok',
+               'source_type',w.result->'source_type',
+               'fallback',w.result->'fallback',
+               'lifecycle_observation_compacted',true
+             )
              else null end,
            last_error=null,
            updated_at=now()
