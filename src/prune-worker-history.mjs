@@ -70,7 +70,7 @@ async function deleteOldRecurringTombstones() {
          from work_items
          where applied_at is not null
            and applied_at < now() - make_interval(days =>
-             case when job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle') then greatest($1::int,3) else $1::int end)
+             case when job_type in ('active_planning_exact','active_planning_agile_detail','eplan_active_lifecycle','active_planning_recent_range') then greatest($1::int,3) else $1::int end)
            and job_type = any($2::text[])
          order by applied_at, id
          limit $3
