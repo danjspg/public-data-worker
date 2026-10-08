@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/prune-worker-history.mjs"
+      - "src/current-appeals.mjs"
       - "tests/discovery-retention.test.mjs"
       - ".github/workflows/verify-discovery-retention.yml"
 
@@ -19,5 +20,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --check src/prune-worker-history.mjs
+      - run: node --check src/prune-worker-history.mjs && node --check src/current-appeals.mjs
       - run: node --test tests/discovery-retention.test.mjs
