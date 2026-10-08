@@ -59,6 +59,12 @@ async function compactAppliedPayloads() {
                'fallback',w.result->'fallback',
                'lifecycle_observation_compacted',true
              )
+             when w.job_type='acp_current_case' then
+             jsonb_build_object(
+               'source_signature',w.result->'source_signature',
+               'checked_at',w.result->'checked_at',
+               'lifecycle_observation_compacted',true
+             )
              else null end,
            last_error=null,
            updated_at=now()
