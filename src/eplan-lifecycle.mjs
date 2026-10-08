@@ -159,6 +159,36 @@ async function persistFetched(item,result){
 }
 
 try {
+  // Every source fetch is live. When the daily enqueue has accumulated several
+  // pending checks for one application, fetching the older copies would repeat
+  // the same work. Keep the newest pending check and retire older unstarted ones.
+  // These are NOT source checks or production applies: checked_at is absent,
+  // no source_sync_state is advanced and no production writer is called.
+  const supersededPending = await client.query(`
+    with ranked as (
+      select id, row_number() over (
+        partition by input->>'application_id' order by id desc
+      ) as rn
+      from work_items
+      where job_type='eplan_active_lifecycle'
+        and status='pending'
+        and applied_at is null
+        and input->>'application_id' is not null
+    )
+    update work_items w
+    set status='completed',
+        applied_at=now(),
+        completed_at=now(),
+        updated_at=now(),
+        last_error=null,
+        result=jsonb_build_object(
+          'superseded',true,
+          'superseded_reason','newer_queued_active_eplan_check'
+        )
+    from ranked r
+    where w.id=r.id and r.rn>1
+    returning w.id
+  `);
   const { rows } = await client.query(`
     select id, job_type, input
     from work_items
@@ -191,7 +221,7 @@ try {
     for(let index=0;index<chunk.length;index++)await persistFetched(chunk[index],fetched[index]);
   }
 
-  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed:lifecycleChanges, lifecycleChanges, rawStatusChanges, fieldChanges, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget }, null, 2));
+  console.log(JSON.stringify({ selected: rows.length, processed, completed, changed:lifecycleChanges, lifecycleChanges, rawStatusChanges, fieldChanges, deferred, failed, stateRecorded, concurrency:CONCURRENCY, paceMs:PACE_MS, timeBudgetMs:TIME_BUDGET_MS, stoppedForTimeBudget, supersededPending: supersededPending.rowCount || 0 }, null, 2));
 } finally {
   await client.end().catch(() => {});
 }
