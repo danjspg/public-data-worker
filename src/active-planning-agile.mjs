@@ -118,7 +118,7 @@ let selected = 0, completed = 0, missing = 0, deferred = 0, resolvedByReference=
 let stoppedForTimeBudget = false;
 try {
   const { rows } = await client.query(`
-    select i.id,i.input,
+    select i.id,i.input,i.attempts,
            case when s.metadata->>'signature_version'='agile-v2'
                 then coalesce(s.metadata->>'last_seen_source_signature',s.last_applied_signature)
                 else null end as previous_source_signature
@@ -155,6 +155,13 @@ try {
         continue;
       }
       const {result,baseResult,sourceSignature,baselineMissing,changeDetected,nothingToApply,checkedAt}=work;
+      // Retry transient source absences once within the same daily work item.
+      // Do not retry reference mismatches: those need investigation, not repeated requests.
+      if (!result.found && ['reference_not_found','not_found'].includes(result.reason) && Number(item.attempts || 0) < 1) {
+        await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now() where id=$1`,[item.id,`source_temporarily_unavailable:${result.reason}`]);
+        deferred += 1;
+        continue;
+      }
       if(result.resolved_by==='reference')resolvedByReference++;
       if(result.source_id_changed)remappedIds++;
       await client.query('begin');
