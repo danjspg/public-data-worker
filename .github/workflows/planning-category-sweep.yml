@@ -23,14 +23,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Skip completed or already-queued category work
+        id: gate
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(psql "$WORKER_DATABASE_URL" -Atqc "
+            select case
+              when coalesce((select (cursor->>'complete')::boolean from worker_jobs where job_key='planning-category-corpus-v1'), false) then 'complete'
+              when exists(select 1 from work_items where job_type='planning_category_corpus' and applied_at is null) then 'outstanding'
+              else 'ready' end
+          ")"
+          echo "sweep_status=$state"
+          if [ "$state" = "ready" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v7
+        if: steps.gate.outputs.run == 'true'
       - uses: actions/setup-node@v7
+        if: steps.gate.outputs.run == 'true'
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - if: steps.gate.outputs.run == 'true'
+        run: npm install --no-audit --no-fund
       - name: Test bounded worker queue
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'schedule'
         run: node --test tests/planning-category-sweep.test.mjs
       - name: Enqueue one category repair tranche
+        if: steps.gate.outputs.run == 'true'
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
         run: node src/planning-category-sweep.mjs
