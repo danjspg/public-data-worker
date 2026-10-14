@@ -1,0 +1,36 @@
+name: "[PUBLIC] Planning category corpus queue"
+
+on:
+  schedule:
+    # Four bounded tranches per day during the quiet Dublin/London window.
+    - cron: "5 0,2,4,6 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "src/planning-category-sweep.mjs"
+      - ".github/workflows/planning-category-sweep.yml"
+      - "tests/planning-category-sweep.test.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: planning-category-corpus-producer
+  cancel-in-progress: false
+
+jobs:
+  enqueue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Test bounded worker queue
+        run: node --test tests/planning-category-sweep.test.mjs
+      - name: Enqueue one category repair tranche
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: node src/planning-category-sweep.mjs
