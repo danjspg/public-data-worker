@@ -13,6 +13,7 @@ const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
 const ACCESS_DENIED_PAUSE_MS = 6 * 60 * 60 * 1000;
+const ACCESS_DIAGNOSTIC_LIMIT = 300;
 let accessDenied = false;
 const CONFIG = {
   CORKCOCO: { client: 'CORKCOCO', tenant: 'corkcoco', detailIdFromSourceUrl: false },
@@ -51,7 +52,13 @@ async function fetchJson(url,config){
       const response=await fetch(url,{headers:headersFor(config),signal:AbortSignal.timeout(30000)});
       if(response.ok)return await response.json();
       if(response.status===404)return null;
-      if(response.status===403){ accessDenied=true; throw new Error('AGILE_ACCESS_DENIED_HTTP_403'); }
+      if(response.status===403){
+        accessDenied=true;
+        const body=(await response.text().catch(()=>''));
+        const diagnostic={status:403,host:new URL(url).host,contentType:response.headers.get('content-type'),server:response.headers.get('server'),via:response.headers.get('via'),retryAfter:response.headers.get('retry-after'),wwwAuthenticate:response.headers.get('www-authenticate'),bodySample:body.replace(/https?:\/\/\S+/g,'[url]').slice(0,ACCESS_DIAGNOSTIC_LIMIT)};
+        console.error('AGILE_ACCESS_DENIED_DIAGNOSTIC',JSON.stringify(diagnostic));
+        throw new Error('AGILE_ACCESS_DENIED_HTTP_403');
+      }
       lastError=new Error(`HTTP ${response.status}`);
       if(!RETRYABLE.has(response.status))break;
     }catch(error){lastError=error; if(accessDenied)throw error;}
