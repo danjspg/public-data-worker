@@ -12,6 +12,8 @@ const startedAt = Date.now();
 const DETAIL_URL = 'https://planningapi.agileapplications.ie/api/application';
 const SEARCH_URL = 'https://planningapi.agileapplications.ie/api/application/search';
 const RETRYABLE = new Set([408,425,429,500,502,503,504]);
+const ACCESS_DENIED_PAUSE_MS = 6 * 60 * 60 * 1000;
+let accessDenied = false;
 const CONFIG = {
   CORKCOCO: { client: 'CORKCOCO', tenant: 'corkcoco', detailIdFromSourceUrl: false },
   CORKCITY: { client: 'CORKCITY', tenant: 'corkcity', detailIdFromSourceUrl: false },
@@ -49,9 +51,10 @@ async function fetchJson(url,config){
       const response=await fetch(url,{headers:headersFor(config),signal:AbortSignal.timeout(30000)});
       if(response.ok)return await response.json();
       if(response.status===404)return null;
+      if(response.status===403){ accessDenied=true; throw new Error('AGILE_ACCESS_DENIED_HTTP_403'); }
       lastError=new Error(`HTTP ${response.status}`);
       if(!RETRYABLE.has(response.status))break;
-    }catch(error){lastError=error;}
+    }catch(error){lastError=error; if(accessDenied)throw error;}
     if(attempt<5)await sleep(attempt*1000);
   }
   throw lastError||new Error('Agile request failed');
@@ -136,7 +139,7 @@ try {
   selected = rows.length;
 
   for (let offset=0; offset<rows.length; offset+=CONCURRENCY) {
-    if (Date.now() - startedAt >= TIME_BUDGET_MS) {
+    if (accessDenied || Date.now() - startedAt >= TIME_BUDGET_MS) {
       stoppedForTimeBudget = true;
       break;
     }
@@ -150,7 +153,7 @@ try {
       }
       if(work.error){
         const message=work.error instanceof Error?work.error.message:String(work.error);
-        await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+interval '30 minutes',updated_at=now() where id=$1`,[item.id,message.slice(0,500)]);
+        await client.query(`update work_items set attempts=attempts+1,last_error=$2,available_at=now()+($3::bigint * interval '1 millisecond'),updated_at=now() where id=$1`,[item.id,message.slice(0,500),accessDenied?ACCESS_DENIED_PAUSE_MS:30*60*1000]);
         deferred += 1;
         continue;
       }
