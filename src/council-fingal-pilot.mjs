@@ -19,7 +19,7 @@ const docs=[];
 for(const match of html.matchAll(/href\s*=\s*["']([^"']+\.doc(?:\?[^"']*)?)["']/gi)){
  const candidate=new URL(match[1].replace(/&amp;/g,"&"),INDEX);
  const decoded=decodeURIComponent(candidate.pathname);
- if(candidate.hostname!=="www.fingal.ie"||!\/planning-weekly-lists\/20\d{2}\s*Week\s*\d+/i.test(decoded))continue;
+ if(candidate.hostname!=="www.fingal.ie"||!decoded.includes("planning-weekly-lists/2026 Week "))continue;
  if(!/\/decisions-made[^/]*\.doc$/i.test(decoded))continue;
  const week=decoded.match(/20(26)\s*Week\s*(\d{1,2})/i);
  if(!week || Number(week[2])<32)continue;
