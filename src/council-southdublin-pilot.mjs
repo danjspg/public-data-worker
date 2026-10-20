@@ -29,7 +29,7 @@ for(const url of documents){
     try{
       const {stdout}=await exec('pdftotext',[mode,'-enc','UTF-8',path,'-'],{timeout:30000,maxBuffer:20000000});
       const records=parseSouthDublinDecisions(stdout,url);
-      const references=[...new Set([...stdout.matchAll(/\bSDZ?\d{2}[AB]\/\d{4}W?\b/gi)].map(m=>m[0].replace(/W$/i,'')))];
+      const references=[...new Set([...stdout.matchAll(new RegExp("SDZ?[0-9]{2}[AB]/[0-9]{4}W?","gi"))].map(m=>m[0].replace(/W$/i,"")))];
       const missing=references.filter(ref=>!records.some(x=>x.reference.replace(/W$/,'')===ref));
       modes.push({mode,parsed:records.length,refused:records.filter(x=>x.decision_text==='Refused').length,
         hasRetentionRefusal:records.some(x=>x.reference==='SD26B/0392W'),
