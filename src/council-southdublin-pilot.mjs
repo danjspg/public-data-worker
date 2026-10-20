@@ -24,9 +24,19 @@ for(const url of documents){
  const dir=await mkdtemp(join(tmpdir(),'southdublin-pilot-'));
  try{
   const path=join(dir,'decisions.pdf');await writeFile(path,buf);
-  const {stdout}=await exec('pdftotext',['-raw','-enc','UTF-8',path,'-'],{timeout:30000,maxBuffer:20000000});
-  const records=parseSouthDublinDecisions(stdout,url);
-  reports.push({url,parsed:records.length,sample:records.slice(0,12)});
+  const modes=[];
+  for(const mode of ['-raw','-layout']){
+    try{
+      const {stdout}=await exec('pdftotext',[mode,'-enc','UTF-8',path,'-'],{timeout:30000,maxBuffer:20000000});
+      const records=parseSouthDublinDecisions(stdout,url);
+      const references=[...new Set([...stdout.matchAll(/\\bSDZ?\\d{2}[AB]\\/\\d{4}W?\\b/gi)].map(m=>m[0].replace(/W$/i,'')))];
+      const missing=references.filter(ref=>!records.some(x=>x.reference.replace(/W$/,'')===ref));
+      modes.push({mode,parsed:records.length,refused:records.filter(x=>x.decision_text==='Refused').length,
+        hasRetentionRefusal:records.some(x=>x.reference==='SD26B/0392W'),
+        missingRefs:missing.slice(0,20),sample:records.slice(0,5)});
+    }catch(error){modes.push({mode,error:String(error.message||error).slice(0,150)})}
+  }
+  reports.push({url,modes});
  }finally{await rm(dir,{recursive:true,force:true});}
 }
 console.log(JSON.stringify({researchOnly:true,documents:reports.length,reports},null,2));
