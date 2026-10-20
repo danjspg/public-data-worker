@@ -1,0 +1,54 @@
+name: "[PUBLIC] Fingal weekly council decision recovery"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-weekly-fingal.yml"
+      - "src/council-weekly-fingal.mjs"
+      - "src/council-weekly-fingal-sync.mjs"
+      - "tests/council-weekly-fingal.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-weekly-fingal.yml"
+      - "src/council-weekly-fingal.mjs"
+      - "src/council-weekly-fingal-sync.mjs"
+  schedule:
+    - cron: "40 5 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-council-fingal-weekly
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Confirm Word text extraction available
+        run: |
+          if ! command -v antiword >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y antiword
+          fi
+      - name: Check source parser and status safety tests
+        run: |
+          node --check src/council-weekly-fingal.mjs
+          node --check src/council-weekly-fingal-sync.mjs
+          node --test tests/council-weekly-fingal.test.mjs
+      - name: Parse live Fingal official documents without writing
+        run: node src/council-weekly-fingal-sync.mjs --dry-run
+      - name: Stage verified decisions into worker Neon only
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COUNCIL_FINGAL_LIMIT: "12"
+        run: node src/council-weekly-fingal-sync.mjs
