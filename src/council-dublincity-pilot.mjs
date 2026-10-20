@@ -50,8 +50,19 @@ for(const doc of current){
   const refs=[...new Set([...text.matchAll(/(?<![A-Za-z0-9])(?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26(?!\d)/gi)].map(x=>x[0].toUpperCase()))];
   const redactedWindows=[...text.matchAll(/(?:WEB|LRD|REF(?:ERENCE)?|REG(?:ISTRATION)?)[^\n]{0,45}/gi)]
    .slice(0,12).map(m=>m[0].replace(/[A-Za-z]{2,}/g,t=>/^(WEB|LRD|REF|REFERENCE|REG|REGISTRATION)$/i.test(t)?t.toUpperCase():"x").replace(/\s+/g," ").slice(0,65));
+  const safe=(value)=>value.replace(/[A-Za-z][A-Za-z'-]*/g,word=>
+   /^(GRANT|GRANTED|REFUSE|REFUSED|REFUSAL|PERMISSION|DECISION|INVALID|APPLICATION|INFORMATION|ADDITIONAL|DATE|REG|REF|RECEIVED|WITHDRAWN|FINAL|CONDITIONS|REQUEST|MADE|FILE|REGISTERED|SUBJECT|TO|OF|NOTIFIED|RETENTION|DECISIONS|APPEALS|NEW|APPLICATIONS)$/i.test(word)?word.toUpperCase():"x");
+  const windows=refs.slice(0,6).map(ref=>{
+    const at=text.indexOf(ref);
+    return {ref,window:safe(text.slice(Math.max(0,at-120),at+330)).slice(0,450)};
+  });
+  const sectionMatches=[...text.matchAll(/.{0,25}(?:DECISION|GRANT|REFUSE|APPLICATIONS|NOTIFICATIONS).{0,35}/gi)]
+    .slice(0,8).map(m=>safe(m[0]).replace(/\s+/g," "));
+  const documentHeader=safe(text.slice(0,1500)).replace(/\n{3,}/g,"\n\n");
+  const outcomeSamples=[...text.matchAll(/\b(?:GRANT(?:ED)?(?:\s+PERMISSION)?|REFUS(?:E|ED|AL)(?:\s+PERMISSION)?|INVALID\s+APPLICATION)\b/gi)]
+    .slice(0,14).map(m=>({term:m[0].toUpperCase(),sample:safe(text.slice(Math.max(0,m.index-100),m.index+110)).replace(/\s+/g," ").slice(0,220)}));
   reports.push({area:doc.area,week:doc.week,url:doc.url,xmlChars:xml.length,textChars:text.length,
-   sampleRefs:refs.slice(0,10),referenceCount:refs.length,redactedWindows,
+   sampleRefs:refs.slice(0,10),referenceCount:refs.length,redactedWindows,windows,sectionMatches,documentHeader,outcomeSamples,
    grantMentions:(text.match(/\bGRANT(?:ED)?\b/gi)||[]).length,
    refuseMentions:(text.match(/\bREFUS(?:ED|AL)\b/gi)||[]).length,
    decisionHeadings:(text.match(/DECISIONS?\s+(?:MADE|GRANTED|REFUSED)/gi)||[]).length});
