@@ -20,7 +20,7 @@ for(const m of html.matchAll(/href\s*=\s*["']([^"']+\.docx)["']/gi)){
  const url=new URL(m[1].replace(/&amp;/g,"&"),INDEX);
  const decoded=decodeURIComponent(url.pathname);
  if(!/^\/sites\/default\/files\//.test(decoded))continue;
- const hit=decoded.match(/\/a([1-5])-wpl-(\d{1,2})-26\.docx$/i);
+ const hit=decoded.match(/\/a([1-5])-wpl-(\d{1,2})-26(?:_\d+)?\.docx$/i);
  if(!hit || Number(hit[2])<32)continue;
  if(url.hostname!=="www.dublincity.ie")continue;
  docs.push({url:url.href,area:Number(hit[1]),week:Number(hit[2])});
