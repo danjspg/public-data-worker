@@ -45,4 +45,14 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           COUNCIL_DUBLINCITY_LIMIT: "12"
-        run: node src/council-weekly-dublincity-sync.mjs
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # One bounded backlog drain on deployment: existing Neon work keys
+            # prevent duplicates; the normal weekly schedule runs only one batch.
+            for batch in 1 2 3 4; do
+              echo "Dublin City recent archive batch $batch of 4"
+              node src/council-weekly-dublincity-sync.mjs
+            done
+          else
+            node src/council-weekly-dublincity-sync.mjs
+          fi
