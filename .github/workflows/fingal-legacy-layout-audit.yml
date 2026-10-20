@@ -1,0 +1,31 @@
+name: "[PUBLIC] Fingal older weekly Word document format audit"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fingal-legacy-layout-audit.yml"
+      - "src/council-fingal-legacy-layout.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Install legacy Word text extraction
+        run: |
+          if ! command -v antiword >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y antiword
+          fi
+      - name: Validate legacy-format audit syntax
+        run: node --check src/council-fingal-legacy-layout.mjs
+      - name: Inspect only official Aug-Sept Fingal documents (read-only)
+        run: node src/council-fingal-legacy-layout.mjs
