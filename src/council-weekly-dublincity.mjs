@@ -35,7 +35,7 @@ export function parseDublinCityDecisions(text,url,cutoff=DUBLIN_CITY_CUTOFF){
  const input=String(text||"");
  const regex=new RegExp("(?<![A-Za-z0-9])("+ref+")(?![0-9])\\s*APPLICATION\\b","gi");
  const markers=[...input.matchAll(regex)];
- if(markers.length<3){
+ if(markers.length<1){
   const basic=[...input.matchAll(new RegExp("("+ref+")","gi"))];
   const samples=basic.slice(0,5).map(m=>{
     const after=input.slice(m.index+m[0].length,m.index+m[0].length+35);
