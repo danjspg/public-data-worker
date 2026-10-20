@@ -1,0 +1,52 @@
+name: "[PUBLIC] Wexford council weekly decisions backfill"
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-weekly-decisions.yml"
+      - "src/council-weekly-*.mjs"
+      - "tests/council-weekly-*.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-weekly-decisions.yml"
+      - "src/council-weekly-*.mjs"
+      - "tests/council-weekly-*.test.mjs"
+  schedule:
+    - cron: "10 4,16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: council-weekly-decisions-worker
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Ensure PDF text extractor
+        run: |
+          if ! command -v pdftotext >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y poppler-utils
+          fi
+      - name: Unit tests
+        run: node --test tests/council-weekly-wexford.test.mjs
+      - name: Check live council archives and parser
+        run: node src/council-weekly-backfill.mjs --dry-run
+      - name: Stage newest documents and historical backfill in worker Neon
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COUNCIL_BACKFILL_FROM_YEAR: "2024"
+          COUNCIL_WEEKLY_FETCH_LIMIT: "12"
+        run: node src/council-weekly-backfill.mjs
