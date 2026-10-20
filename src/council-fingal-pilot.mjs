@@ -46,8 +46,14 @@ for(const doc of docs.slice(0,3)){
      const redacted=nearby.replace(/[A-Za-z]{2,}/g,token=>allowed.test(token)?token.toUpperCase():"x");
      return {ref,around:redacted.replace(/\s+/g," ").slice(0,165)};
    });
+   const safe=(value)=>value.replace(/[A-Za-z][A-Za-z'-]*/g,word=>
+     /^(GRANT|GRANTED|REFUSE|REFUSED|REFUSAL|PERMISSION|DECISION|INVALID|APPLICATION|INFORMATION|ADDITIONAL|DATE|REG|REF|RECEIVED|WITHDRAWN|FINAL|CONDITIONS|REQUEST|MADE|FILE|REGISTERED|SUBJECT|TO|OF|NOTIFIED|RETENTION)$/i.test(word)?word.toUpperCase():"x");
+   const windows=refs.slice(0,5).map(ref=>{
+     const at=stdout.indexOf(ref);
+     return {ref,window:safe(stdout.slice(Math.max(0,at-90),at+430)).slice(0,550)};
+   });
    reports.push({week:doc.week,url:doc.url,bytes:bytes.length,chars:stdout.length,uniqueReferences:refs.length,dateHits,
-     sampleReferences:refs.slice(0,15),diagnostic,grantMentions:(stdout.match(/\bGRANT(?:ED)?\b/gi)||[]).length,
+     sampleReferences:refs.slice(0,15),diagnostic,windows,grantMentions:(stdout.match(/\bGRANT(?:ED)?\b/gi)||[]).length,
      refusalMentions:(stdout.match(/\bREFUS(?:ED|AL)\b/gi)||[]).length});
  }finally{await rm(dir,{recursive:true,force:true});}
 }
