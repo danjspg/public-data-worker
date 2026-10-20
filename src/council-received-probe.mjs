@@ -66,7 +66,7 @@ const probes=[
  {council:"DUBLINCITY",url:dublin[0].url,mode:"docx"}
 ];
 const safe=x=>x.replace(/\b[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'-]*\b/g,word=>
- /^(?:APPLICATION|APPLICATIONS|RECEIVED|VALID|PERMISSION|RETENTION|NEW|DATE|REGISTERED|REG|REF|TYPE|DESCRIPTION|PROPOSAL|LOCATION|DECISION|ADDITIONAL|INFORMATION|SUBMISSION|WEEK|OF|FROM|TO|APPLICANT|COMMERCIAL|DOMESTIC|GRANT|REFUSE|FILE|NOTIFICATION|ADDRESS|PUBLIC|PLANNING|REPORT|AND)$/i.test(word)?word.toUpperCase():"x");
+ /^(?:APPLICATION|APPLICATIONS|RECEIVED|VALID|PERMISSION|RETENTION|NEW|DATE|REGISTERED|REG|REF|TYPE|DESCRIPTION|PROPOSAL|LOCATION|DECISION|ADDITIONAL|INFORMATION|SUBMISSION|WEEK|OF|FROM|TO|APPLICANT|COMMERCIAL|DOMESTIC|GRANT|REFUSE|FILE|NOTIFICATION|ADDRESS|PUBLIC|PLANNING|REPORT|AND|REGISTRATION|DATE|INITIAL|APPLICATION|SUBMITTED|SECTION|CURRENT|CATEGORY|PART|REFERENCE|APPEALS|PROPOSAL|STATUS|NOT|RELEVANT)$/i.test(word)?word.toUpperCase():"x");
 const report=[];
 for(const probe of probes){
  if(!probe.url)throw Error("No "+probe.council+" applications received URL");
@@ -78,9 +78,12 @@ for(const probe of probes){
   DUBLINCITY:/(?<![A-Za-z0-9])(?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26(?!\d)/gi
  }[probe.council];
  const refs=[...new Set([...text.matchAll(refExp)].map(m=>m[0]))];
- const contexts=refs.slice(0,5).map(ref=>{
+ const contextRefs=["FINGAL","DUBLINCITY"].includes(probe.council)?
+  [...new Set([...refs.slice(0,2),...refs.slice(-10)])]:refs.slice(0,5);
+ const contexts=contextRefs.map(ref=>{
   const at=text.indexOf(ref);
-  return {ref,maskedContext:safe(text.slice(Math.max(0,at-90),at+220)).replace(/\s+/g," ").slice(0,250)};
+  const snippet=text.slice(Math.max(0,at-150),at+680);
+  return {ref,maskedContext:safe(snippet).replace(/\s+/g," ").slice(0,780)};
  });
  report.push({council:probe.council,source:probe.url,bytesOfExtractedText:text.length,uniqueReferences:refs.length,
   sampleReferences:refs.slice(0,10),maskedHeader:safe(text.slice(0,650)).replace(/\s+/g," ").slice(0,500),
