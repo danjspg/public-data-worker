@@ -1,0 +1,48 @@
+name: "[PUBLIC] Dublin City council weekly DOCX recovery"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-weekly-dublincity.yml"
+      - "src/council-weekly-dublincity.mjs"
+      - "src/council-weekly-dublincity-sync.mjs"
+      - "tests/council-weekly-dublincity.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-weekly-dublincity.yml"
+      - "src/council-weekly-dublincity.mjs"
+      - "src/council-weekly-dublincity-sync.mjs"
+  schedule:
+    - cron: "55 5 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: public-council-dublincity-weekly
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Verify DOCX parsing and safeguards
+        run: |
+          command -v unzip
+          node --check src/council-weekly-dublincity.mjs
+          node --check src/council-weekly-dublincity-sync.mjs
+          node --test tests/council-weekly-dublincity.test.mjs
+      - name: Validate five live official documents without writes
+        run: node src/council-weekly-dublincity-sync.mjs --dry-run
+      - name: Stage council decisions in Neon worker only
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COUNCIL_DUBLINCITY_LIMIT: "12"
+        run: node src/council-weekly-dublincity-sync.mjs
