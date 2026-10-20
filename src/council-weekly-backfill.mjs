@@ -7,7 +7,10 @@ import {execFile as cb} from 'node:child_process';
 import {promisify} from 'node:util';
 import {findWexfordDecisionLinks,parseWexfordDecisionText} from './council-weekly-wexford.mjs';
 const exec=promisify(cb), {Client}=pg, JOB='council_weekly_decisions';
-const START=Math.max(2010,Math.min(new Date().getUTCFullYear(),Number(process.env.COUNCIL_BACKFILL_FROM_YEAR||2024)));
+// Recover recent lifecycle gaps only. Decisions on older applications may still
+// qualify if they were issued after this date.
+const RECOVERY_FROM_DATE="2026-08-01";
+const START=Number(RECOVERY_FROM_DATE.slice(0,4));
 const LIMIT=Math.max(1,Math.min(25,Number(process.env.COUNCIL_WEEKLY_FETCH_LIMIT||12)));
 const INDEX=year=>'https://www.wexfordcoco.ie/planning/planning-applications/planning-lists/planning-lists-for-'+year;
 const started=Date.now();
@@ -48,6 +51,7 @@ async function discover(){
    years.push({year,documents:links.length});
  }
  return {years,docs:[...new Map(docs.map(d=>[d.url,d])).values()]
+  .filter(d=>d.week&&d.week>=RECOVERY_FROM_DATE)
   .sort((a,b)=>String(b.week||'').localeCompare(String(a.week||'')))};
 }
 const {years,docs}=await discover();
@@ -65,7 +69,7 @@ try{
    const r=await db.query("insert into work_items(job_type,work_key,input,status,available_at,updated_at) values($1,$2,$3::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do nothing returning id",
     [JOB,key,JSON.stringify({authority:'WEXFORD',url,week_ending:week,archive_year:year})]);seeded+=r.rowCount;
  }
- const {rows}=await db.query("select id,input,attempts from work_items where job_type=$1 and status='pending' and applied_at is null and available_at<=now() and input->>'authority'='WEXFORD' order by input->>'week_ending' desc nulls last,id desc limit $2",[JOB,LIMIT]);
+ const {rows}=await db.query("select id,input,attempts from work_items where job_type=$1 and status='pending' and applied_at is null and available_at<=now() and input->>'authority'='WEXFORD' and input->>'week_ending' >= $3 order by input->>'week_ending' desc nulls last,id desc limit $2",[JOB,LIMIT,RECOVERY_FROM_DATE]);
  for(const item of rows){
    if(Date.now()-started>25*60*1000)break;
    try{
