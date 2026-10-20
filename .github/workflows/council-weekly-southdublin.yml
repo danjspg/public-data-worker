@@ -42,6 +42,7 @@ jobs:
           fi
       - name: Check parser and extraction job
         run: |
+          node --check src/council-weekly-southdublin.mjs
           node --check src/council-weekly-southdublin-sync.mjs
           node --test tests/council-weekly-southdublin.test.mjs
       - name: Live read-only archive discovery and sample verification
