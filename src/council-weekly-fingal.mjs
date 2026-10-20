@@ -64,3 +64,46 @@ export function parseFingalWeeklyText(raw,url,cutoff=FINGAL_CUTOFF){
  if(!decisions.length)throw Error("Fingal text yielded no explicit grant/refusal decisions");
  return {decisions,tableRows:matches.length,excluded};
 }
+
+
+// August–September Word reports place decision date BEFORE the reference and
+// line-wrap application type and outcome around it. Keep this parser separate
+// from the newer tabular format. Reject truncated reference tokens and
+// descriptions that mention old approvals.
+export function parseFingalLegacyText(raw,url,cutoff=FINGAL_CUTOFF){
+ const input=String(raw||"").replace(/\u00a0/g," ");
+ if(!/\bDECISION\b/i.test(input))throw Error("Missing official Fingal decision header");
+ const dates=[...input.matchAll(/(?<![0-9])([0-3][0-9]\/[01][0-9]\/2026)(?![0-9])/g)];
+ if(dates.length<5)throw Error("Legacy report lacks decision date rows");
+ const entries=[],seen=new Map();let excluded=0;
+ const refRx=new RegExp("(?<![A-Za-z0-9/])("+refPattern+")(?![A-Za-z0-9/])","gim");
+ for(let i=0;i<dates.length;i++){
+  const found=dates[i],date=fingalIsoDate(found[1]);
+  if(!date||date<cutoff){excluded++;continue;}
+  const segment=input.slice(found.index+found[0].length,
+    Math.min(dates[i+1]?.index??input.length,found.index+found[0].length+550));
+  const refs=[...segment.matchAll(refRx)];
+  if(!refs.length){excluded++;continue;}
+  // The principal application number occurs near the council date, before
+  // applicant/address text and any cited prior planning numbers.
+  const ref=refs[0];
+  if(ref.index>190){excluded++;continue;}
+  const following=segment.slice(ref.index+ref[0].length,ref.index+ref[0].length+170);
+  const status=[...following.matchAll(/\b(?:REFUSE(?:\s+PERMISSION)?|GRANT(?:\s+(?:PERMISSION|RETENTION|OUTLINE))?|INVALID\s+APPLICATION|REQUEST\s+ADDITIONAL\s+INFORMATION)\b/gi)];
+  if(!status.length||status[0].index>95){excluded++;continue;}
+  const first=status[0][0].toUpperCase();
+  if(first.startsWith("INVALID")||first.startsWith("REQUEST")){excluded++;continue;}
+  const refused=first.startsWith("REFUS");
+  // Only accept one decision polarity in the near-header region.
+  const opposite=status.slice(1).some(m=>m.index<110&&m[0].toUpperCase().startsWith("REFUS")!==refused);
+  if(opposite){excluded++;continue;}
+  const record={reference:ref[1].toUpperCase(),decision_date:date,
+   decision_text:refused?"Refused":"Granted",registration_date:null,source_url:url};
+  const prior=seen.get(record.reference);
+  if(prior&&(prior.decision_date!==record.decision_date||prior.decision_text!==record.decision_text))
+   throw Error("Conflicting Fingal decisions "+record.reference);
+  if(!prior){seen.set(record.reference,record);entries.push(record);}
+ }
+ if(!entries.length)throw Error("Legacy Fingal report has no verified grant/refusal rows");
+ return {decisions:entries,tableRows:dates.length,excluded};
+}

@@ -1,0 +1,33 @@
+name: "[PUBLIC] Fingal legacy August weekly decision parsing verification"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/fingal-legacy-verify.yml"
+      - "src/council-weekly-fingal.mjs"
+      - "src/council-fingal-legacy-verify.mjs"
+      - "tests/council-fingal-legacy.test.mjs"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Ensure Word parser
+        run: |
+          if ! command -v antiword >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y antiword
+          fi
+      - name: Verify legacy parser
+        run: |
+          node --check src/council-weekly-fingal.mjs
+          node --test tests/council-fingal-legacy.test.mjs
+      - name: Test real Fingal August and September reports, read-only
+        run: node src/council-fingal-legacy-verify.mjs
