@@ -1,0 +1,61 @@
+name: "[PUBLIC] Official council received applications discovery"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-received-discovery.yml"
+      - "src/council-received-*.mjs"
+      - "tests/council-received-*.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-received-discovery.yml"
+      - "src/council-received-*.mjs"
+  workflow_dispatch:
+  schedule:
+    - cron: "35 6 * * 1,4"
+permissions:
+  contents: read
+concurrency:
+  group: council-received-worker
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Ensure PDF and Word extraction available
+        run: |
+          if ! command -v pdftotext >/dev/null || ! command -v antiword >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y poppler-utils antiword
+          fi
+      - name: Validate file syntax and unit tests
+        run: |
+          node --check src/council-received-probe.mjs
+          node --check src/council-received-sync.mjs
+          node --test tests/council-received-parser.test.mjs
+      - name: Read-only audit of live council applications received lists
+        run: |
+          node src/council-received-probe.mjs
+          node src/council-received-sync.mjs --dry-run
+      - name: Stage council applications in Neon
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COUNCIL_RECEIVED_DOCUMENT_LIMIT: "12"
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            # One bounded August-onwards document catch-up on integration.
+            # Normal schedule checks one small batch twice a week.
+            for batch in 1 2 3 4 5 6; do
+              echo "Received-list initial catch-up batch $batch"
+              node src/council-received-sync.mjs
+            done
+          else
+            node src/council-received-sync.mjs
+          fi
