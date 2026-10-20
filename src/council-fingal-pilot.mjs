@@ -39,8 +39,15 @@ for(const doc of docs.slice(0,3)){
    const {stdout}=await exec("antiword",["-w","0",file],{timeout:30000,maxBuffer:20000000});
    const refs=[...new Set([...stdout.matchAll(/\b(?:FW?\d{2}A\/\d{4}E?|LRD\d{4}\/S3E?|FW?\d{2}B\/\d{4}E?)\b/gi)].map(x=>x[0].toUpperCase()))];
    const dateHits=[...stdout.matchAll(/\b(?:[0-3]?\d\/[01]?\d\/20\d{2}|[0-3]?\d-[01]?\d-20\d{2})\b/g)].length;
+   const allowed=/^(?:GRANT|PERMISSION|REFUSE|REFUSED|REFUSAL|INFORMATION|ADDITIONAL|DECISION|DATE|APPLICATION|MADE|INVALID|NOTIFIED|REG|REF|REQUEST|CONDITIONS|RECEIVED)$/i;
+   const diagnostic=refs.slice(0,5).map(ref=>{
+     const at=stdout.indexOf(ref);
+     const nearby=stdout.slice(Math.max(0,at-65),at+100);
+     const redacted=nearby.replace(/[A-Za-z]{2,}/g,token=>allowed.test(token)?token.toUpperCase():"x");
+     return {ref,around:redacted.replace(/\s+/g," ").slice(0,165)};
+   });
    reports.push({week:doc.week,url:doc.url,bytes:bytes.length,chars:stdout.length,uniqueReferences:refs.length,dateHits,
-     sampleReferences:refs.slice(0,15),grantMentions:(stdout.match(/\bGRANT(?:ED)?\b/gi)||[]).length,
+     sampleReferences:refs.slice(0,15),diagnostic,grantMentions:(stdout.match(/\bGRANT(?:ED)?\b/gi)||[]).length,
      refusalMentions:(stdout.match(/\bREFUS(?:ED|AL)\b/gi)||[]).length});
  }finally{await rm(dir,{recursive:true,force:true});}
 }
