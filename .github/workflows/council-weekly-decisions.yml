@@ -47,12 +47,12 @@ jobs:
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
-          COUNCIL_BACKFILL_FROM_YEAR: "2024"
+          COUNCIL_BACKFILL_FROM_YEAR: "2026"
           COUNCIL_WEEKLY_FETCH_LIMIT: "25"
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            # One-time bounded historical catch-up after deployment: at most 125 PDFs
-            # with a 700ms pause between documents; all documents dedupe in Neon.
+            # Bounded recent-recovery catch-up from 1 August 2026.
+            # Document fetches are paced and deduplicated in Neon.
             for batch in 1 2 3 4 5; do
               echo "Council catch-up batch $batch of 5"
               node src/council-weekly-backfill.mjs
