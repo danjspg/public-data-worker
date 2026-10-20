@@ -16,14 +16,15 @@ async function fetchCouncil(url){
 }
 const html=(await fetchCouncil(INDEX)).toString("utf8");
 const docs=[];
-for(const match of html.matchAll(/href\s*=\s*["']([^"']+\.doc(?:\?[^"']*)?)["']/gi)){
- const candidate=new URL(match[1].replace(/&amp;/g,"&"),INDEX);
- const decoded=decodeURIComponent(candidate.pathname);
- if(candidate.hostname!=="www.fingal.ie"||!decoded.includes("planning-weekly-lists/2026 Week "))continue;
- if(!/\/decisions-made[^/]*\.doc$/i.test(decoded))continue;
- const week=decoded.match(/20(26)\s*Week\s*(\d{1,2})/i);
- if(!week || Number(week[2])<32)continue;
- if(!docs.some(d=>d.url===candidate.href))docs.push({url:candidate.href,week:Number(week[2])});
+for(const row of html.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi)){
+ const week=row[0].match(/\bweek\s*(\d{1,2})\b/i);
+ if(!week||Number(week[1])<32)continue;
+ const links=[...row[0].matchAll(/href\s*=\s*["']([^"']+\.doc(?:\?[^"']*)?)["']/gi)];
+ const urls=links.map(match=>new URL(match[1].replace(/&amp;/g,"&"),INDEX))
+   .filter(u=>u.hostname==="www.fingal.ie" && /decisions?\W*made/i.test(decodeURIComponent(u.pathname))
+     && !/appeals?/i.test(decodeURIComponent(u.pathname)));
+ if(urls.length!==1)throw Error("Fingal week "+week[1]+" decision link ambiguous: "+urls.length);
+ docs.push({url:urls[0].href,week:Number(week[1])});
 }
 docs.sort((a,b)=>b.week-a.week);
 if(docs.length<5||docs.length>25)throw Error("Fingal weekly DOC discovery unexpected count: "+docs.length);
