@@ -40,6 +40,7 @@ jobs:
           node --check src/council-received-sync.mjs
           node --test tests/council-received-parser.test.mjs
       - name: Read-only audit of live council applications received lists
+        if: github.event_name == 'pull_request'
         run: |
           node src/council-received-probe.mjs
           node src/council-received-sync.mjs --dry-run
