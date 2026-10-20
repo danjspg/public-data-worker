@@ -7,7 +7,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {execFile as cb} from "node:child_process";
 import {promisify} from "node:util";
-import {SOUTH_DUBLIN_INDEX,findSouthDublinDecisionDocuments,parseSouthDublinDecisions} from "./council-weekly-southdublin.mjs";
+import {SOUTH_DUBLIN_INDEX,findSouthDublinRecentWeeks,parseSouthDublinDecisions} from "./council-weekly-southdublin.mjs";
 const exec=promisify(cb);
 const {Client}=pg;
 const CUTOFF="2026-08-01",JOB="council_weekly_decisions";
@@ -26,33 +26,11 @@ async function get(url,pdf=false){
  if(b.length<500||b.length>20000000||b.subarray(0,5).toString()!=="%PDF-")throw Error("Invalid PDF file");
  return b;
 }
-function dateFromText(date){
- const m=String(date).match(/^(\d{2})\/(\d{2})\/(20\d{2})$/);
- if(!m)return null;
- const iso=m[3]+"-"+m[2]+"-"+m[1],actual=new Date(iso+"T00:00:00Z");
- return Number.isNaN(actual.getTime())||actual.toISOString().slice(0,10)!==iso?null:iso;
-}
-function documentWeeks(html,base){
- const links=findSouthDublinDecisionDocuments(html,base),result=[];
- for(const url of links){
-   const rawHref=url.replace("https://planning.southdublin.ie","");
-   const candidates=[rawHref,url,rawHref.replaceAll("&","&amp;")];
-   const indices=candidates.map(s=>html.indexOf(s)).filter(n=>n>=0);
-   if(!indices.length)throw Error("Cannot locate original link in council HTML "+url);
-   const at=Math.min(...indices);
-   const before=html.slice(Math.max(0,at-650),at);
-   const dates=[...before.matchAll(/\b\d{2}\/\d{2}\/20\d{2}\b/g)];
-   const week=dateFromText(dates.at(-1)?.[0]);
-   if(!week)throw Error("Cannot independently verify list week date "+url);
-   if(week>=CUTOFF)result.push({url,week});
- }
- return result;
-}
 const docs=[];
 for(let page=1;page<=3;page++){
  const base=SOUTH_DUBLIN_INDEX+(page===1?"":"?p="+page);
  const html=await get(base);
- const found=documentWeeks(html,base);
+ const found=findSouthDublinRecentWeeks(html,base,CUTOFF);
  docs.push(...found);
  if(found.length===0)break;
 }
