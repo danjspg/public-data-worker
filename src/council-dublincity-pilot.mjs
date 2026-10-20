@@ -47,7 +47,7 @@ for(const doc of current){
   const path=join(dir,"source.docx");await writeFile(path,bytes);
   const {stdout:xml}=await exec("unzip",["-p",path,"word/document.xml"],{timeout:30000,maxBuffer:20000000});
   const text=paragraphs(xml);
-  const refs=[...new Set([...text.matchAll(/\b(?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26\b/gi)].map(x=>x[0].toUpperCase()))];
+  const refs=[...new Set([...text.matchAll(/(?<![A-Za-z0-9])(?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26(?!\d)/gi)].map(x=>x[0].toUpperCase()))];
   const redactedWindows=[...text.matchAll(/(?:WEB|LRD|REF(?:ERENCE)?|REG(?:ISTRATION)?)[^\n]{0,45}/gi)]
    .slice(0,12).map(m=>m[0].replace(/[A-Za-z]{2,}/g,t=>/^(WEB|LRD|REF|REFERENCE|REG|REGISTRATION)$/i.test(t)?t.toUpperCase():"x").replace(/\s+/g," ").slice(0,65));
   reports.push({area:doc.area,week:doc.week,url:doc.url,xmlChars:xml.length,textChars:text.length,
