@@ -17,6 +17,9 @@ async function download(raw,pdf=false){
  return b;
 }
 const html=await download(SOUTH_DUBLIN_INDEX);
+const pagerAt=html.search(/Page\\s+1\\s+of/i);
+console.log(JSON.stringify({paginationHtml:pagerAt>=0?html.slice(Math.max(0,pagerAt-1000),pagerAt+1200).replace(/<script[\\s\\S]*?<\\/script>/gi,'[script removed]').slice(0,1800):null,
+forms:[...html.matchAll(/<form\\b[^>]*>/gi)].map(m=>m[0]).slice(0,6)},null,2));
 const documents=findSouthDublinDecisionDocuments(html).slice(0,3);
 const reports=[];
 for(const url of documents){
