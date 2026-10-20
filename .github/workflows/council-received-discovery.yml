@@ -11,6 +11,8 @@ on:
       - ".github/workflows/council-received-discovery.yml"
       - "src/council-received-*.mjs"
   workflow_dispatch:
+  schedule:
+    - cron: "35 6 * * 1,4"
 permissions:
   contents: read
 concurrency:
@@ -35,6 +37,15 @@ jobs:
       - name: Validate file syntax and unit tests
         run: |
           node --check src/council-received-probe.mjs
-          if [ -f tests/council-received-parser.test.mjs ]; then node --test tests/council-received-parser.test.mjs; fi
+          node --check src/council-received-sync.mjs
+          node --test tests/council-received-parser.test.mjs
       - name: Read-only audit of live council applications received lists
-        run: node src/council-received-probe.mjs
+        run: |
+          node src/council-received-probe.mjs
+          node src/council-received-sync.mjs --dry-run
+      - name: Stage council applications in Neon
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COUNCIL_RECEIVED_DOCUMENT_LIMIT: "12"
+        run: node src/council-received-sync.mjs
