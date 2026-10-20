@@ -35,7 +35,14 @@ export function parseDublinCityDecisions(text,url,cutoff=DUBLIN_CITY_CUTOFF){
  const input=String(text||"");
  const regex=new RegExp("(?<![A-Za-z0-9])("+ref+")(?![0-9])\\s*APPLICATION\\b","gi");
  const markers=[...input.matchAll(regex)];
- if(markers.length<3)throw Error("Dublin City DOCX lacks planning record markers");
+ if(markers.length<3){
+  const basic=[...input.matchAll(new RegExp("("+ref+")","gi"))];
+  const samples=basic.slice(0,5).map(m=>{
+    const after=input.slice(m.index+m[0].length,m.index+m[0].length+35);
+    return {reference:m[0],following:after.replace(/[A-Za-z]+/g,w=>/^APPLICATION$/i.test(w)?"APPLICATION":"x").replace(/\s+/g," ").slice(0,35)};
+  });
+  throw Error("Dublin City record structure changed: strict "+markers.length+", basic "+basic.length+"; "+JSON.stringify(samples));
+ }
  let excluded=0;
  const records=[],seen=new Map();
  for(const hit of markers){
