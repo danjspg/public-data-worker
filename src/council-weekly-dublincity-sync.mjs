@@ -58,11 +58,12 @@ try{
  for(const item of rows){
   try{
    const parsed=await extract(item.input.url);
-   if(!parsed.decisions.length)throw Error("No explicit decisions found");
+   // A small council area may legitimately have no grant/refusal in a week.\n   // Record a verified empty document as already applied (no production work).
    const result={ok:true,authority:"DUBLINCITY",url:item.input.url,sha256:parsed.sha256,
     week_ending:item.input.week_ending,area:item.input.area,decisions:parsed.decisions,total:parsed.markers,parsed:parsed.decisions.length,
     excluded:parsed.excluded,parser_version:1,checked_at:new Date().toISOString()};
-   await db.query("update work_items set status='completed',result=$2::jsonb,attempts=attempts+1,completed_at=now(),last_error=null,updated_at=now() where id=$1",[item.id,JSON.stringify(result)]);
+   await db.query("update work_items set status='completed',result=$2::jsonb,attempts=attempts+1,completed_at=now(),applied_at=case when $3 then now() else applied_at end,last_error=null,updated_at=now() where id=$1",
+    [item.id,JSON.stringify(result),parsed.decisions.length===0]);
    completed++;reports.push({area:item.input.area,week:item.input.week,records:parsed.decisions.length});
    await new Promise(resolve=>setTimeout(resolve,750));
   }catch(error){
