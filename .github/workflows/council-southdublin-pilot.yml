@@ -6,6 +6,7 @@ on:
       - ".github/workflows/council-southdublin-pilot.yml"
       - "src/council-southdublin-pilot.mjs"
       - "src/council-weekly-southdublin.mjs"
+      - "src/council-weekly-southdublin-sync.mjs"
       - "tests/council-weekly-southdublin.test.mjs"
   workflow_dispatch:
 
@@ -32,3 +33,6 @@ jobs:
         run: node --test tests/council-weekly-southdublin.test.mjs
       - name: Validate three real latest weekly council PDFs (no database writes)
         run: node src/council-southdublin-pilot.mjs
+
+      - name: Verify recent document staging and date cutoff (read-only)
+        run: node src/council-weekly-southdublin-sync.mjs --dry-run
