@@ -1,0 +1,31 @@
+name: "[PUBLIC] Fingal council weekly Word list research"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-fingal-pilot.yml"
+      - "src/council-fingal-pilot.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Ensure Word extractor available
+        run: |
+          if ! command -v antiword >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y antiword
+          fi
+      - name: Check probe syntax
+        run: node --check src/council-fingal-pilot.mjs
+      - name: Inspect three official Fingal decision documents, read-only
+        run: node src/council-fingal-pilot.mjs
