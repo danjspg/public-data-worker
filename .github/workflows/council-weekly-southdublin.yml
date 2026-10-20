@@ -1,0 +1,54 @@
+name: "[PUBLIC] South Dublin council weekly decision recovery"
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-weekly-southdublin.yml"
+      - "src/council-weekly-southdublin.mjs"
+      - "src/council-weekly-southdublin-sync.mjs"
+      - "tests/council-weekly-southdublin.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-weekly-southdublin.yml"
+      - "src/council-weekly-southdublin.mjs"
+      - "src/council-weekly-southdublin-sync.mjs"
+  schedule:
+    - cron: "25 5 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-southdublin-council-weekly
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check PDF converter
+        run: |
+          if ! command -v pdftotext >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y poppler-utils
+          fi
+      - name: Check parser and extraction job
+        run: |
+          node --check src/council-weekly-southdublin-sync.mjs
+          node --test tests/council-weekly-southdublin.test.mjs
+      - name: Live read-only archive discovery and sample verification
+        run: node src/council-weekly-southdublin-sync.mjs --dry-run
+      - name: Stage verified council decisions in Neon worker
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          COUNCIL_SOUTHDUBLIN_LIMIT: "15"
+        run: node src/council-weekly-southdublin-sync.mjs
