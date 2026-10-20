@@ -48,7 +48,7 @@ try{
  for(const doc of docs){
   const hash=createHash("sha256").update(doc.url).digest("hex").slice(0,24);
   const key="FINGAL:"+hash;
-  const weekEnding=new Date(Date.UTC(2026,0,4+doc.week*7)).toISOString().slice(0,10);
+  const weekEnding=new Date(Date.UTC(2026,0,4+(doc.week-1)*7)).toISOString().slice(0,10);
   const inserted=await db.query("insert into work_items(job_type,work_key,input,status,available_at,updated_at) values($1,$2,$3::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do nothing returning id",
     [JOB,key,JSON.stringify({authority:"FINGAL",url:doc.url,week:doc.week,week_ending:weekEnding})]);
   seeded+=inserted.rowCount;
