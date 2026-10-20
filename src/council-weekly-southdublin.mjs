@@ -38,7 +38,7 @@ export function parseSouthDublinDecisions(text,url){
    if(Number.isNaN(check.getTime())||check.toISOString().slice(0,10)!==iso)continue;
    let ref=refMatch[1]+refMatch[2];
    const after=header.slice(pos+refMatch[0].length);
-   if(!ref.endsWith("W")&&/\bW\s*$/.test(after))ref+="W";
+   if(!ref.endsWith("W")&&(/\bW\s*$/.test(after)||/^\s*W\b/.test(after)))ref+="W";
    ref=ref.toUpperCase();
    const decision_text=isRefusal?"Refused":"Granted";
    const previous=seen.get(ref);
