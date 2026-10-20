@@ -24,16 +24,20 @@ function complete(x){return x.registration_date>=CUTOFF && x.registration_date<=
 export function parseWexfordReceived(text,url){
  const raw=String(text||"").replace(/\r/g,"").replace(/\f/g,"\n");
  if(!/Valid Applications Received from/i.test(raw))throw Error("Unexpected Wexford received PDF");
- const hits=[...raw.matchAll(/^(20\d{6}W)\s+(\d{2}\/\d{2}\/20\d{2})\s+(Permission(?: for Retention)?|Retention)\b[^\n]*/gim)];
+ const hits=[...raw.matchAll(/(?<![A-Za-z0-9])(20\d{6}W)\s+(\d{2}\/\d{2}\/20\d{2})\b/gim)];
  if(!hits.length)throw Error("No Wexford application headers");
  const applications=[],seen=new Set();let skipped=0;
  for(let i=0;i<hits.length;i++){
   const h=hits[i],date=receivedDate(h[2]);
   const body=raw.slice(h.index+h[0].length,hits[i+1]?.index??raw.length);
+  // PDF text sometimes wraps application type and applicant into separate columns;
+  // the reference+date pair is a stronger header boundary than type alone.
+  const beforeLocation=body.split(/\bLocation\s*:/i)[0].slice(0,240);
+  const applicationType=/\b(Permission\s+and\s+Retention|Permission\s+for\s+Retention|Permission|Retention)\b/i.exec(beforeLocation)?.[1];
   const x={reference:h[1].slice(0,-1).toUpperCase(),web_reference:h[1].toUpperCase(),registration_date:date,
-   application_type:norm(h[3]),location:field(body,"Location",["Proposal","EIA Status"]),
+   application_type:norm(applicationType),location:field(body,"Location",["Proposal","EIA Status"]),
    proposal:field(body,"Proposal",["EIA Status","Location"]),source_url:url};
-  if(!date||!complete(x)||seen.has(x.reference)){skipped++;continue;}
+  if(!date||!applicationType||!complete(x)||seen.has(x.reference)){skipped++;continue;}
   seen.add(x.reference);applications.push(x);
  }
  return {applications,headers:hits.length,skipped};
