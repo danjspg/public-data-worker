@@ -50,8 +50,16 @@ for(const doc of current){
   const refs=[...new Set([...text.matchAll(/(?<![A-Za-z0-9])(?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26(?!\d)/gi)].map(x=>x[0].toUpperCase()))];
   const redactedWindows=[...text.matchAll(/(?:WEB|LRD|REF(?:ERENCE)?|REG(?:ISTRATION)?)[^\n]{0,45}/gi)]
    .slice(0,12).map(m=>m[0].replace(/[A-Za-z]{2,}/g,t=>/^(WEB|LRD|REF|REFERENCE|REG|REGISTRATION)$/i.test(t)?t.toUpperCase():"x").replace(/\s+/g," ").slice(0,65));
+  const safe=(value)=>value.replace(/[A-Za-z][A-Za-z'-]*/g,word=>
+   /^(GRANT|GRANTED|REFUSE|REFUSED|REFUSAL|PERMISSION|DECISION|INVALID|APPLICATION|INFORMATION|ADDITIONAL|DATE|REG|REF|RECEIVED|WITHDRAWN|FINAL|CONDITIONS|REQUEST|MADE|FILE|REGISTERED|SUBJECT|TO|OF|NOTIFIED|RETENTION|DECISIONS|APPEALS|NEW|APPLICATIONS)$/i.test(word)?word.toUpperCase():"x");
+  const windows=refs.slice(0,6).map(ref=>{
+    const at=text.indexOf(ref);
+    return {ref,window:safe(text.slice(Math.max(0,at-120),at+330)).slice(0,450)};
+  });
+  const sectionMatches=[...text.matchAll(/.{0,25}(?:DECISION|GRANT|REFUSE|APPLICATIONS|NOTIFICATIONS).{0,35}/gi)]
+    .slice(0,8).map(m=>safe(m[0]).replace(/\s+/g," "));
   reports.push({area:doc.area,week:doc.week,url:doc.url,xmlChars:xml.length,textChars:text.length,
-   sampleRefs:refs.slice(0,10),referenceCount:refs.length,redactedWindows,
+   sampleRefs:refs.slice(0,10),referenceCount:refs.length,redactedWindows,windows,sectionMatches,
    grantMentions:(text.match(/\bGRANT(?:ED)?\b/gi)||[]).length,
    refuseMentions:(text.match(/\bREFUS(?:ED|AL)\b/gi)||[]).length,
    decisionHeadings:(text.match(/DECISIONS?\s+(?:MADE|GRANTED|REFUSED)/gi)||[]).length});
