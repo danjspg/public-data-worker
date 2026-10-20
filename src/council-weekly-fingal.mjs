@@ -6,7 +6,7 @@ const refPattern="(?:FW?\\d{2}[AB]\\/\\d{4}E?|LRD\\d{4}\\/S3E?)";
 export const FINGAL_REFERENCE=new RegExp("^"+refPattern+"$","i");
 
 export function fingalIsoDate(value){
- const m=String(value).match(/^(\\d{2})\\/(\\d{2})\\/(20\\d{2})$/);
+ const m=String(value).match(new RegExp("^([0-9]{2})/([0-9]{2})/(20[0-9]{2})$"));
  if(!m)return null;
  const iso=m[3]+"-"+m[2]+"-"+m[1],d=new Date(iso+"T00:00:00Z");
  return Number.isNaN(d.valueOf())||d.toISOString().slice(0,10)!==iso?null:iso;
