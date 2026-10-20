@@ -8,12 +8,15 @@ function row(ref,status,date){
 }
 test("DOCX official five-area discovery accepts reupload suffix",()=>{
  const html='<a href="/sites/default/files/2026-10/a1-wpl-41-26.docx">a1</a><a href="/sites/default/files/2026-10/a2-wpl-41-26_0.docx">a2</a>'+
+ '<a href="/sites/default/files/2026-10/a3-wpl-41-26.docx">a3</a>'+
+ '<a href="/sites/default/files/2026-10/a4-wpl-41-26.docx">a4</a>'+
+ '<a href="/sites/default/files/2026-10/a5-wpl-41-26.docx">a5</a>'+
  '<a href="/sites/default/files/2026-07/a3-wpl-30-26.docx">old</a>';
  const docs=dublinDocLinks(html);
- assert.equal(docs.length,2);assert.equal(docs[1].area,2);
+ assert.equal(docs.length,5);assert.equal(docs[1].area,2);
 });
 test("DOCX XML text conversion keeps paragraphs and tabs",()=>{
- const xml="<w:document><w:p><w:t>WEB1234/26</w:t><w:tab/><w:t>APPLICATION</w:t></w:p><w:p><w:t>GRANT</w:t></w:p></w:document>";
+ const xml="<w:document><w:p><w:t>WEB1234/26</w:t><w:tab/><w:t>APPLICATION</w:t></w:p><w:p><w:t>GRANT</w:t></w:p><w:p><w:t>"+("More planning description information. ".repeat(20))+"</w:t></w:p></w:document>";
  const txt=dublinDocxXmlText(xml);
  assert.match(txt,/WEB1234\/26\s+APPLICATION/);
  assert.match(txt,/GRANT/);
