@@ -74,6 +74,7 @@ try{
      const result={ok:true,authority:'WEXFORD',url:item.input.url,week_ending:item.input.week_ending,sha256:p.sha256,total:p.total,decisions,parser_version:1,checked_at:new Date().toISOString()};
      await db.query("update work_items set status='completed',result=$2::jsonb,attempts=attempts+1,completed_at=now(),last_error=null,updated_at=now() where id=$1",[item.id,JSON.stringify(result)]);
      complete++;reports.push({week:item.input.week_ending,parsed:decisions.length,total:p.total});
+     await new Promise(resolve=>setTimeout(resolve,700)); // Keep bulk historical council downloads deliberately paced.
    }catch(e){
      const attempts=Number(item.attempts||0)+1;
      await db.query("update work_items set attempts=$2,status=case when $2>=4 then 'failed' else 'pending' end,available_at=now()+interval '12 hours',last_error=$3,updated_at=now() where id=$1",[item.id,attempts,String(e.message||e).slice(0,500)]);

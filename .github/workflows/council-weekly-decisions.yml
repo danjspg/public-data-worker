@@ -48,5 +48,15 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           COUNCIL_BACKFILL_FROM_YEAR: "2024"
-          COUNCIL_WEEKLY_FETCH_LIMIT: "12"
-        run: node src/council-weekly-backfill.mjs
+          COUNCIL_WEEKLY_FETCH_LIMIT: "25"
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # One-time bounded historical catch-up after deployment: at most 125 PDFs
+            # with a 700ms pause between documents; all documents dedupe in Neon.
+            for batch in 1 2 3 4 5; do
+              echo "Council catch-up batch $batch of 5"
+              node src/council-weekly-backfill.mjs
+            done
+          else
+            node src/council-weekly-backfill.mjs
+          fi
