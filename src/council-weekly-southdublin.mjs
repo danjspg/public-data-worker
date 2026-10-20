@@ -53,3 +53,22 @@ export function parseSouthDublinDecisions(text,url){
  if(results.length<3)throw Error("South Dublin extracted fewer than three decisions");
  return results;
 }
+
+export function findSouthDublinRecentWeeks(html,base=SOUTH_DUBLIN_INDEX,cutoff="2026-08-01"){
+ const docs=[];
+ for(const url of findSouthDublinDecisionDocuments(html,base)){
+   const u=new URL(url);
+   const variants=[u.pathname,url];
+   const positions=variants.map(v=>html.indexOf(v)).filter(n=>n>=0);
+   if(!positions.length)throw Error("Official South Dublin list reference could not be verified: "+url);
+   const before=html.slice(Math.max(0,Math.min(...positions)-650),Math.min(...positions));
+   const dates=[...before.matchAll(/\b(\d{2})\/(\d{2})\/(20\d{2})\b/g)];
+   const hit=dates.at(-1);
+   if(!hit)throw Error("Missing source week date for "+url);
+   const week=hit[3]+"-"+hit[2]+"-"+hit[1];
+   const d=new Date(week+"T00:00:00Z");
+   if(Number.isNaN(d.getTime())||d.toISOString().slice(0,10)!==week)throw Error("Invalid council week date: "+week);
+   if(week>=cutoff) docs.push({url,week});
+ }
+ return docs;
+}
