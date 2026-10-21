@@ -1,0 +1,27 @@
+name: "[PUBLIC] DLR official planning weekly PDF source pilot"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-weekly-dlr.yml"
+      - "src/council-weekly-dlr*.mjs"
+      - "tests/council-weekly-dlr*.mjs"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check parser tests
+        run: |
+          command -v pdftotext
+          node --check src/council-weekly-dlr.mjs
+          node --test tests/council-weekly-dlr.test.mjs
+      - name: Verify live official weekly PDF lists without writes
+        run: node src/council-weekly-dlr-pilot.mjs
