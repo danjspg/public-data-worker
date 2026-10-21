@@ -20,7 +20,10 @@ jobs:
       - run: npm install --no-audit --no-fund
       - name: Check parser tests
         run: |
-          command -v pdftotext
+          if ! command -v pdftotext >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y poppler-utils
+          fi
           node --check src/council-weekly-dlr.mjs
           node --test tests/council-weekly-dlr.test.mjs
       - name: Verify live official weekly PDF lists without writes
