@@ -6,6 +6,8 @@ on:
       - "src/council-weekly-dlr*.mjs"
       - "tests/council-weekly-dlr*.mjs"
   workflow_dispatch:
+  schedule:
+    - cron: "30 7 * * 1,4"
 permissions:
   contents: read
 jobs:
@@ -25,6 +27,16 @@ jobs:
             sudo apt-get install -y poppler-utils
           fi
           node --check src/council-weekly-dlr.mjs
+          node --check src/council-weekly-dlr-sync.mjs
           node --test tests/council-weekly-dlr.test.mjs
       - name: Verify live official weekly PDF lists without writes
-        run: node src/council-weekly-dlr-pilot.mjs
+        if: github.event_name == 'pull_request'
+        run: |
+          node src/council-weekly-dlr-pilot.mjs
+          node src/council-weekly-dlr-sync.mjs --dry-run
+      - name: Stage verified DLR registrations on worker
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          DLR_WEEKLY_DOCUMENT_LIMIT: "11"
+        run: node src/council-weekly-dlr-sync.mjs
