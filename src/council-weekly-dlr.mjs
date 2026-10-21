@@ -22,7 +22,7 @@ export function discoverDlrWeeks(html,base=DLR_WEEKLY_INDEX){
   const url=new URL(m[2].replace(/&amp;/g,"&"),base);
   if(url.protocol!=="https:"||url.hostname!=="www.dlrcoco.ie"||
    !url.pathname.toLowerCase().endsWith(".pdf"))continue;
-  const week_ending=new Date(Date.UTC(2026,0,3+week*7)).toISOString().slice(0,10);
+  const week_ending=new Date(Date.UTC(2026,0,3+(week-1)*7)).toISOString().slice(0,10);
   docs.set(week,{url:url.href,week,week_ending,authority:"DLR"});
  }
  const arr=[...docs.values()].sort((a,b)=>b.week-a.week);
