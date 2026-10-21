@@ -60,30 +60,28 @@ export function parseCorkMapalertsReceived(html,url,cutoff=CORK_MAPALERTS_CUTOFF
   throw Error("Not a Cork County weekly planning alert");
  const applicationRows=[];
  let skipped=0,found=0;
- // A row is anchored by "File Number", cross-checked with the preceding
- // Permission // Location heading, followed by an explicit "Application Received".
- for(let i=header+1;i<lines.length;i++){
-  const number=lines[i].match(/^File Number:\s*(\d{2}\/\d{4,6})\s*$/i);
-  if(!number)continue;
+ // Council markup may put every field in the same HTML block, or split
+ // labels and values across nested elements. Segment by official title.
+ const headings=[];
+ const headingRx=/^(Permission(?:\s+for\s+Retention|\s+Consequent)?|Retention)\s*\/\/\s*(.+)$/i;
+ for(let i=header+1;i<lines.length;i++)if(headingRx.test(lines[i]))headings.push(i);
+ for(let j=0;j<headings.length;j++){
+  const start=headings[j],match=lines[start].match(headingRx);
+  const section=lines.slice(start+1,headings[j+1]??lines.length).join("\n");
+  const number=section.match(/\bFile\s+Number\s*:\s*(\d{2}\/\d{4,6})\b/i);
+  if(!number){skipped++;continue;}
   found++;
-  const start=Math.max(header+1,i-14);
-  let heading=-1;
-  for(let j=i-1;j>=start;j--)if(/^(Permission(?:\s+for\s+Retention|\s+Consequent)?|Retention)\s*\/\/\s*(.+)$/i.test(lines[j])){heading=j;break;}
-  if(heading<0){skipped++;continue;}
-  const headingMatch=lines[heading].match(/^(Permission(?:\s+for\s+Retention|\s+Consequent)?|Retention)\s*\/\/\s*(.+)$/i);
-  const after=lines.slice(i+1,Math.min(i+12,lines.length));
-  const status=after.find(x=>/^Status:\s*/i.test(x))?.replace(/^Status:\s*/i,"");
-  const received=after.find(x=>/^Received:\s*/i.test(x))?.replace(/^Received:\s*/i,"");
-  const decision=after.find(x=>/^Decision:\s*/i.test(x))?.replace(/^Decision:\s*/i,"");
-  const decisionDate=after.find(x=>/^Decision Date:\s*/i.test(x))?.replace(/^Decision Date:\s*/i,"");
+  const received=section.match(/\bReceived\s*:\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})/i)?.[1];
+  const status=section.match(/\bStatus\s*:\s*(Permission(?:\s+for\s+Retention|\s+Consequent)?|Retention)\b/i)?.[1];
+  const decision=section.match(/\bDecision\s*:\s*(Application Received|Decision Made|Invalid Application|Further Information(?: Received)?|Refused|Granted)\b/i)?.[1];
+  const decisionDate=section.match(/\bDecision Date\s*:\s*(N\/A|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})/i)?.[1];
   const registration_date=mapalertsDate(received);
-  const location=headingMatch[2].trim();
-  const proposal=lines.slice(heading+1,i).filter(x=>!/^Applicant:\s*/i.test(x)).join(" ").trim();
-  const application_type=headingMatch[1];
-  const reference=number[1];
-  // Do NOT treat administrative follow-ups and previously decided cases as new.
+  const location=match[2].trim();
+  const proposal=section.split(/\bApplicant\s*:/i)[0].trim();
+  const application_type=match[1],reference=number[1];
+  // No other lifecycle event can be mistaken for an application registration.
   if(!registration_date||registration_date<cutoff||
-     !/^\s*Application Received\s*$/i.test(decision||"")||
+     !/^Application Received$/i.test(decision||"")||
      (decisionDate&&!/^(?:N\/A|-|None)$/i.test(decisionDate))||
      !status||status.toLowerCase()!==application_type.toLowerCase()||
      location.length<7||proposal.length<22||proposal.length>3000||
@@ -93,7 +91,7 @@ export function parseCorkMapalertsReceived(html,url,cutoff=CORK_MAPALERTS_CUTOFF
   applicationRows.push({reference,web_reference:reference,registration_date,
    application_type,location,proposal,source_url:url});
  }
- if(found<5||applicationRows.length<3)throw Error("Cork weekly alert insufficient parsed received records: anchors="+found+", valid="+applicationRows.length+", skipped="+skipped+", fileLabels="+lines.filter(x=>/File Number/i.test(x)).length+", headings="+lines.filter(x=>/^Permission.*\/\//i.test(x)).length);
+ if(found<5||applicationRows.length<3)throw Error("Cork weekly alert insufficient parsed received records: anchors="+found+", valid="+applicationRows.length+", skipped="+skipped+", fileLabels="+lines.filter(x=>/File Number/i.test(x)).length+", headings="+headings.length);
  const seen=new Map();
  for(const row of applicationRows){
   const old=seen.get(row.reference);
