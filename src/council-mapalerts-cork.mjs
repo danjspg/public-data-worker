@@ -93,7 +93,7 @@ export function parseCorkMapalertsReceived(html,url,cutoff=CORK_MAPALERTS_CUTOFF
   applicationRows.push({reference,web_reference:reference,registration_date,
    application_type,location,proposal,source_url:url});
  }
- if(found<5||applicationRows.length<3)throw Error("Cork weekly alert has too few valid application records");
+ if(found<5||applicationRows.length<3)throw Error("Cork weekly alert insufficient parsed received records: anchors="+found+", valid="+applicationRows.length+", skipped="+skipped+", fileLabels="+lines.filter(x=>/File Number/i.test(x)).length+", headings="+lines.filter(x=>/^Permission.*\/\//i.test(x)).length);
  const seen=new Map();
  for(const row of applicationRows){
   const old=seen.get(row.reference);
