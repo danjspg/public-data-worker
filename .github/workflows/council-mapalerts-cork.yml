@@ -11,6 +11,8 @@ on:
       - ".github/workflows/council-mapalerts-cork.yml"
       - "src/council-mapalerts-cork*.mjs"
   workflow_dispatch:
+  schedule:
+    - cron: "15 7 * * 1,4"
 
 permissions:
   contents: read
@@ -21,7 +23,7 @@ concurrency:
 jobs:
   recover:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,6 +34,17 @@ jobs:
         run: |
           node --check src/council-mapalerts-cork.mjs
           node --check src/council-mapalerts-cork-pilot.mjs
+          node --check src/council-mapalerts-cork-sync.mjs
           node --test tests/council-mapalerts-cork.test.mjs
       - name: Verify live official MapAlerts pages without writes
-        run: node src/council-mapalerts-cork-pilot.mjs
+        if: github.event_name == 'pull_request'
+        run: |
+          node src/council-mapalerts-cork-pilot.mjs
+          node src/council-mapalerts-cork-sync.mjs --dry-run
+
+      - name: Stage Cork County official new registrations on worker
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          CORK_MAPALERTS_DOCUMENT_LIMIT: "6"
+        run: node src/council-mapalerts-cork-sync.mjs
