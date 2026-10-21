@@ -1,0 +1,50 @@
+name: "[PUBLIC] Cork County MapAlerts weekly applications recovery"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-mapalerts-cork.yml"
+      - "src/council-mapalerts-cork*.mjs"
+      - "tests/council-mapalerts-cork*.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-mapalerts-cork.yml"
+      - "src/council-mapalerts-cork*.mjs"
+  workflow_dispatch:
+  schedule:
+    - cron: "15 7 * * 1,4"
+
+permissions:
+  contents: read
+concurrency:
+  group: cork-county-official-weekly
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Test council-only discovery and received-status filtering
+        run: |
+          node --check src/council-mapalerts-cork.mjs
+          node --check src/council-mapalerts-cork-pilot.mjs
+          node --check src/council-mapalerts-cork-sync.mjs
+          node --test tests/council-mapalerts-cork.test.mjs
+      - name: Verify live official MapAlerts pages without writes
+        if: github.event_name == 'pull_request'
+        run: |
+          node src/council-mapalerts-cork-pilot.mjs
+          node src/council-mapalerts-cork-sync.mjs --dry-run
+
+      - name: Stage Cork County official new registrations on worker
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          CORK_MAPALERTS_DOCUMENT_LIMIT: "6"
+        run: node src/council-mapalerts-cork-sync.mjs
