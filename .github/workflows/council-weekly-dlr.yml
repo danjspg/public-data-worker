@@ -1,0 +1,42 @@
+name: "[PUBLIC] DLR official planning weekly PDF source pilot"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-weekly-dlr.yml"
+      - "src/council-weekly-dlr*.mjs"
+      - "tests/council-weekly-dlr*.mjs"
+  workflow_dispatch:
+  schedule:
+    - cron: "30 7 * * 1,4"
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Check parser tests
+        run: |
+          if ! command -v pdftotext >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y poppler-utils
+          fi
+          node --check src/council-weekly-dlr.mjs
+          node --check src/council-weekly-dlr-sync.mjs
+          node --test tests/council-weekly-dlr.test.mjs
+      - name: Verify live official weekly PDF lists without writes
+        if: github.event_name == 'pull_request'
+        run: |
+          node src/council-weekly-dlr-pilot.mjs
+          node src/council-weekly-dlr-sync.mjs --dry-run
+      - name: Stage verified DLR registrations on worker
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          DLR_WEEKLY_DOCUMENT_LIMIT: "11"
+        run: node src/council-weekly-dlr-sync.mjs
