@@ -1,0 +1,37 @@
+name: "[PUBLIC] Cork County MapAlerts weekly applications recovery"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-mapalerts-cork.yml"
+      - "src/council-mapalerts-cork*.mjs"
+      - "tests/council-mapalerts-cork*.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-mapalerts-cork.yml"
+      - "src/council-mapalerts-cork*.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: cork-county-official-weekly
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Test council-only discovery and received-status filtering
+        run: |
+          node --check src/council-mapalerts-cork.mjs
+          node --check src/council-mapalerts-cork-pilot.mjs
+          node --test tests/council-mapalerts-cork.test.mjs
+      - name: Verify live official MapAlerts pages without writes
+        run: node src/council-mapalerts-cork-pilot.mjs
