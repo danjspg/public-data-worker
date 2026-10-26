@@ -2,7 +2,7 @@ name: "[PUBLIC] Process active Agile Planning source checks"
 
 on:
   schedule:
-    - cron: "25 * * * *"
+    - cron: "25 6 * * *"
   push:
     branches: [main]
     paths:
@@ -37,5 +37,6 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           ACTIVE_AGILE_WORKER_LIMIT: "5000"
+          ACTIVE_AGILE_CONCURRENCY: "1"
           ACTIVE_AGILE_TIME_BUDGET_MS: "3000000"
         run: npm run work:active-agile
