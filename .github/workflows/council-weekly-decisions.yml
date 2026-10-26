@@ -42,6 +42,7 @@ jobs:
       - name: Unit tests
         run: node --test tests/council-weekly-wexford.test.mjs
       - name: Check live council archives and parser
+        if: github.event_name == 'pull_request'
         run: node src/council-weekly-backfill.mjs --dry-run
       - name: Stage newest documents and historical backfill in worker Neon
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -49,14 +50,6 @@ jobs:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           COUNCIL_BACKFILL_FROM_YEAR: "2026"
           COUNCIL_WEEKLY_FETCH_LIMIT: "25"
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # Bounded recent-recovery catch-up from 1 August 2026.
-            # Document fetches are paced and deduplicated in Neon.
-            for batch in 1 2 3 4 5; do
-              echo "Council catch-up batch $batch of 5"
-              node src/council-weekly-backfill.mjs
-            done
-          else
-            node src/council-weekly-backfill.mjs
-          fi
+        # Each invocation processes one bounded batch. Historical backfill
+        # resumes on later schedules rather than multiplying source traffic on push.
+        run: node src/council-weekly-backfill.mjs
