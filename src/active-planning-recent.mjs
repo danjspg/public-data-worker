@@ -9,6 +9,8 @@ if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 const LIMIT = Math.max(1, Math.min(Number(process.env.ACTIVE_RECENT_WORKER_LIMIT || 40), 100));
 const RECENT_DAYS = Math.max(7, Math.min(Number(process.env.ACTIVE_RECENT_DAYS || 21), 42));
 const SOURCE_POLICY_VERSION = 'first-party-v3';
+// Temporary source access policy. Set to false only after authorised Agile access is restored.
+const AGILE_ACCESS_BLOCKED = process.env.AGILE_ACCESS_BLOCKED === 'true';
 const ARC_QUERY = 'https://services.arcgis.com/NzlPQPKn5QF9v2US/ArcGIS/rest/services/IrishPlanningApplications/FeatureServer/0/query';
 const AGILE_SEARCH = 'https://planningapi.agileapplications.ie/api/application/search';
 const AGILE_DETAIL = 'https://planningapi.agileapplications.ie/api/application';
@@ -119,6 +121,11 @@ async function fetchEplanRecent(input){
 async function fetchPreferred(input){
   const preferred=planningSourceForAuthority(input.local_authority_code);
   if(!preferred)throw new Error('unsupported_planning_authority');
+  // Avoid a known-blocked upstream probe on every discovery run. Preserve
+  // preferred-source attribution and continue discovering through national data.
+  if(preferred.family==='agile' && AGILE_ACCESS_BLOCKED){
+    return {rows:await fetchNational(input),source_type:'national',source_preferred:'agile',fallback:true,fallback_reason:'agile_access_blocked_configured'};
+  }
   try{
     if(preferred.family==='agile')return {rows:await fetchAgile(input),source_type:'agile',source_preferred:'agile',fallback:false};
     if(preferred.family==='eplan'){const found=await fetchEplanRecent(input);return {rows:found.rows,source_type:'eplan',source_preferred:'eplan',fallback:false,listing:found.listing};}
