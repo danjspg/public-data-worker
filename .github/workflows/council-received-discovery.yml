@@ -49,14 +49,6 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           COUNCIL_RECEIVED_DOCUMENT_LIMIT: "12"
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            # One bounded August-onwards document catch-up on integration.
-            # Normal schedule checks one small batch twice a week.
-            for batch in 1 2 3 4 5 6; do
-              echo "Received-list initial catch-up batch $batch"
-              node src/council-received-sync.mjs
-            done
-          else
-            node src/council-received-sync.mjs
-          fi
+        # One bounded batch per invocation, including push-triggered verification.
+        # Avoid re-running the former six-batch initial catch-up on every code change.
+        run: node src/council-received-sync.mjs
