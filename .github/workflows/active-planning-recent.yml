@@ -38,4 +38,7 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           ACTIVE_RECENT_WORKER_LIMIT: "40"
+          # Upstream explicitly blocks Agile requests; keep national fallback active.
+          # Remove this flag after authorised access has been verified.
+          AGILE_ACCESS_BLOCKED: "true"
         run: npm run work:active-recent
