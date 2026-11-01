@@ -136,7 +136,7 @@ export function parseCorkMapalertsDecisions(html,url,cutoff=CORK_MAPALERTS_CUTOF
    if(rejectedSamples.length<6){
     const decisionRaw=section.match(/\\bDecision\\s*:\\s*([^\\n]+)/i)?.[1]?.slice(0,90)||null;
     const dateRaw=section.match(/\\bDecision Date\\s*:\\s*([^\\n]+)/i)?.[1]?.slice(0,80)||null;
-    if(decisionRaw&&decisionRaw!=="Application Received")rejectedSamples.push({reference,reason,decisionRaw,dateRaw});
+    if(reason==="missing_date"|| (decisionRaw&&decisionRaw!=="Application Received"))rejectedSamples.push({reference,reason,decisionRaw,dateRaw,decisionLines:section.split("\\n").filter(line=>/decision|date/i.test(line)).slice(0,5)});
    }
    continue;
   }
