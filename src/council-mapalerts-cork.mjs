@@ -119,7 +119,8 @@ export function parseCorkMapalertsDecisions(html,url,cutoff=CORK_MAPALERTS_CUTOF
  const headingRx=/^(Permission(?:\s+for\s+Retention|\s+Consequent)?|Retention)\s*\/\/\s*(.+)$/i;
  const headings=[];
  for(let i=header+1;i<lines.length;i++)if(headingRx.test(lines[i]))headings.push(i);
- const decisions=[];
+ const decisions=[],rejectedSamples=[];
+ const reasons={missing_reference:0,missing_decision:0,missing_date:0,future_date:0,chronology:0};
  for(let j=0;j<headings.length;j++){
   const section=lines.slice(headings[j]+1,headings[j+1]??lines.length).join("\n");
   const reference=section.match(/\bFile\s+Number\s*:\s*(\d{2}\/\d{4,6})\b/i)?.[1];
@@ -128,7 +129,17 @@ export function parseCorkMapalertsDecisions(html,url,cutoff=CORK_MAPALERTS_CUTOF
   const decision_date=mapalertsDate(dateValue);
   const registration_date=mapalertsDate(section.match(/\bReceived\s*:\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})\b/i)?.[1]);
   if(!reference||!decisionValue||!decision_date||decision_date>week||
-     (registration_date&&decision_date<registration_date))continue;
+     (registration_date&&decision_date<registration_date)){
+   const reason=!reference?"missing_reference":!decisionValue?"missing_decision":
+    !decision_date?"missing_date":decision_date>week?"future_date":"chronology";
+   reasons[reason]++;
+   if(rejectedSamples.length<6){
+    const decisionRaw=section.match(/\\bDecision\\s*:\\s*([^\\n]+)/i)?.[1]?.slice(0,90)||null;
+    const dateRaw=section.match(/\\bDecision Date\\s*:\\s*([^\\n]+)/i)?.[1]?.slice(0,80)||null;
+    if(decisionRaw&&decisionRaw!=="Application Received")rejectedSamples.push({reference,reason,decisionRaw,dateRaw});
+   }
+   continue;
+  }
   const decision_text=/^refused$/i.test(decisionValue)?"Refused":
    /^granted(?:\s*\(conditional\))?$/i.test(decisionValue)?
      (/conditional/i.test(decisionValue)?"Granted (Conditional)":"Granted"):"Decision Made";
@@ -141,5 +152,5 @@ export function parseCorkMapalertsDecisions(html,url,cutoff=CORK_MAPALERTS_CUTOF
    throw Error("Contradictory Cork weekly decision "+record.reference);
   byRef.set(record.reference,record);
  }
- return {decisions:[...byRef.values()],total:headings.length,week};
+ return {decisions:[...byRef.values()],total:headings.length,week,diagnostics:{reasons,rejectedSamples}};
 }
