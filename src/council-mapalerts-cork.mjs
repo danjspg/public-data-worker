@@ -101,3 +101,45 @@ export function parseCorkMapalertsReceived(html,url,cutoff=CORK_MAPALERTS_CUTOFF
  }
  return {applications:[...seen.values()],headers:found,skipped,week:mapalertsDate(lines[header].split(",").slice(1).join(",").trim())};
 }
+
+
+/**
+ * Verified decision events from Cork County's weekly public MapAlerts.
+ * "Decision Made" is intentionally recorded without inferring grant/refusal.
+ * A valid explicit decision date is mandatory; no decision is inferred from its
+ * due date or from a generic page publication date.
+ */
+export function parseCorkMapalertsDecisions(html,url,cutoff=CORK_MAPALERTS_CUTOFF){
+ const lines=asLines(html);
+ const header=lines.findIndex(l=>/^Weekly Planning Alert,\s*\d{1,2}\/\d{1,2}\/20\d{2}$/i.test(l));
+ if(header<0||!lines.some(l=>/New and decided planning application updates issued by Cork County Council/i.test(l)))
+  throw Error("Not a Cork County weekly planning alert");
+ const week=mapalertsDate(lines[header].split(",").slice(1).join(",").trim());
+ if(!week||week<cutoff)throw Error("Cork decision week outside recovery window");
+ const headingRx=/^(Permission(?:\s+for\s+Retention|\s+Consequent)?|Retention)\s*\/\/\s*(.+)$/i;
+ const headings=[];
+ for(let i=header+1;i<lines.length;i++)if(headingRx.test(lines[i]))headings.push(i);
+ const decisions=[];
+ for(let j=0;j<headings.length;j++){
+  const section=lines.slice(headings[j]+1,headings[j+1]??lines.length).join("\n");
+  const reference=section.match(/\bFile\s+Number\s*:\s*(\d{2}\/\d{4,6})\b/i)?.[1];
+  const decisionValue=section.match(/\bDecision\s*:\s*(Decision Made|Granted(?:\s*\(Conditional\))?|Refused)\b/i)?.[1];
+  const dateValue=section.match(/\bDecision Date\s*:\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})\b/i)?.[1];
+  const decision_date=mapalertsDate(dateValue);
+  const registration_date=mapalertsDate(section.match(/\bReceived\s*:\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})\b/i)?.[1]);
+  if(!reference||!decisionValue||!decision_date||decision_date>week||
+     (registration_date&&decision_date<registration_date))continue;
+  const decision_text=/^refused$/i.test(decisionValue)?"Refused":
+   /^granted(?:\s*\(conditional\))?$/i.test(decisionValue)?
+     (/conditional/i.test(decisionValue)?"Granted (Conditional)":"Granted"):"Decision Made";
+  decisions.push({reference,decision_date,decision_text,registration_date:registration_date||null,source_url:url});
+ }
+ const byRef=new Map();
+ for(const record of decisions){
+  const previous=byRef.get(record.reference);
+  if(previous&&(previous.decision_date!==record.decision_date||previous.decision_text!==record.decision_text))
+   throw Error("Contradictory Cork weekly decision "+record.reference);
+  byRef.set(record.reference,record);
+ }
+ return {decisions:[...byRef.values()],total:headings.length,week};
+}
