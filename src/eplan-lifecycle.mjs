@@ -196,7 +196,7 @@ try {
       and status = 'pending'
       and applied_at is null
       and available_at <= now()
-    order by case when job_type='eplan_active_lifecycle' then 0 else 1 end, id
+    order by case when job_type='eplan_active_lifecycle' then 0 else 1 end,\n      case when job_type='eplan_active_lifecycle' then coalesce((input->>'priority')::int,0) else 0 end desc, id
     limit $1
   `, [LIMIT]);
 

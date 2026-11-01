@@ -2,7 +2,7 @@
 // No Agile API usage and no production database credentials.
 import pg from "pg";
 import {createHash} from "node:crypto";
-import {CORK_MAPALERTS_INDEX,discoverCorkMapalertWeeks,parseCorkMapalertsReceived} from "./council-mapalerts-cork.mjs";
+import {CORK_MAPALERTS_INDEX,discoverCorkMapalertWeeks,parseCorkMapalertsReceived,parseCorkMapalertsDecisions} from "./council-mapalerts-cork.mjs";
 const {Client}=pg;
 const JOB="council_weekly_received",DRY=process.argv.includes("--dry-run");
 const DOC_LIMIT=Math.max(1,Math.min(8,Number(process.env.CORK_MAPALERTS_DOCUMENT_LIMIT||6)));
@@ -43,7 +43,9 @@ if(DRY){
  for(const d of docs.slice(0,3)){
   const html=await official(d.url),sha=createHash("sha256").update(html).digest("hex");
   const result=parseCorkMapalertsReceived(html,d.url);
+  const decisions=parseCorkMapalertsDecisions(html,d.url);
   preview.push({week:d.week_ending,sha256:sha,headers:result.headers,newApplications:result.applications.length,
+   verifiedDecisions:decisions.decisions.length,statusOnlyDecisions:decisions.statusOnly,decisionSamples:decisions.decisions.slice(0,8),
    otherEventsExcluded:result.skipped,samples:result.applications.slice(0,12).map(x=>({reference:x.reference,date:x.registration_date,type:x.application_type}))});
  }
  console.log(JSON.stringify({dryRun:true,discovered:docs.length,preview},null,2));process.exit(0);
@@ -84,6 +86,32 @@ try{
    report.push({week:job.input.week_ending,error:String(e.message||e).slice(0,170)});
   }
  }
- console.log(JSON.stringify({seeded,complete,failed,discovered:docs.length,report},null,2));
+ // Stage independently published decisions, including for applications received months ago.
+ // These are council observations only; production applies them in its guarded
+ // overnight workflow. The document hash makes updated weekly pages idempotent.
+ let decisionStaged=0,decisionExisting=0,decisionEvents=0,decisionFailures=0;
+ for(const d of docs.slice(0,DOC_LIMIT)){
+  try{
+   const html=await official(d.url),sha256=createHash("sha256").update(html).digest("hex");
+   const parsed=parseCorkMapalertsDecisions(html,d.url);
+   if(parsed.week!==d.week_ending||parsed.total>500)throw Error("Cork weekly decision identity/count mismatch");
+   if(!parsed.decisions.length)continue;
+   const result={ok:true,authority:"CORKCOCO",url:d.url,week_ending:d.week_ending,
+    sha256,decisions:parsed.decisions,total:parsed.total,
+    parser_version:1,source:"cork_county_mapalerts_weekly",checked_at:new Date().toISOString()};
+   const workKey="CORKCOCO:MAPALERTS_DECISION:"+createHash("sha256").update(d.url).digest("hex").slice(0,20)+":"+sha256.slice(0,20);
+   const inserted=await db.query(
+    "insert into work_items(job_type,work_key,input,status,result,available_at,completed_at,updated_at) values('council_weekly_decisions',$1,$2::jsonb,'completed',$3::jsonb,now(),now(),now()) on conflict(job_type,work_key) do nothing returning id",
+    [workKey,JSON.stringify(d),JSON.stringify(result)]);
+   if(inserted.rowCount){decisionStaged++;decisionEvents+=parsed.decisions.length;}
+   else decisionExisting++;
+   await new Promise(resolve=>setTimeout(resolve,700));
+  }catch(e){
+   decisionFailures++;
+   report.push({week:d.week_ending,decisionsError:String(e.message||e).slice(0,170)});
+  }
+ }
+ if(decisionFailures && !decisionStaged && !decisionExisting)process.exitCode=1;
+ console.log(JSON.stringify({seeded,complete,failed,discovered:docs.length,decisionStaged,decisionExisting,decisionEvents,decisionFailures,report},null,2));
  if(failed&&!complete)process.exitCode=1;
 }finally{await db.end();}

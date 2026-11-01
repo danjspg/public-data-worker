@@ -101,3 +101,48 @@ export function parseCorkMapalertsReceived(html,url,cutoff=CORK_MAPALERTS_CUTOFF
  }
  return {applications:[...seen.values()],headers:found,skipped,week:mapalertsDate(lines[header].split(",").slice(1).join(",").trim())};
 }
+
+
+/**
+ * Official Cork County weekly events. The council often says "Decision Made"
+ * while publishing "Decision Date: N/A"; we may publish only the neutral status.
+ * Never synthesize a decision date or grant/refusal from the weekly alert date.
+ */
+export function parseCorkMapalertsDecisions(html,url,cutoff=CORK_MAPALERTS_CUTOFF){
+ const lines=asLines(html);
+ const header=lines.findIndex(l=>/^Weekly Planning Alert,\s*\d{1,2}\/\d{1,2}\/20\d{2}$/i.test(l));
+ if(header<0||!lines.some(l=>/New and decided planning application updates issued by Cork County Council/i.test(l)))
+  throw Error("Not a Cork County weekly planning alert");
+ const week=mapalertsDate(lines[header].split(",").slice(1).join(",").trim());
+ if(!week||week<cutoff)throw Error("Cork decision week outside recovery window");
+ const headingRx=/^(Permission(?:\s+for\s+Retention|\s+Consequent)?|Retention)\s*\/\/\s*(.+)$/i;
+ const headings=[];
+ for(let i=header+1;i<lines.length;i++)if(headingRx.test(lines[i]))headings.push(i);
+ const byRef=new Map();
+ let skipped=0;
+ for(let i=0;i<headings.length;i++){
+  const section=lines.slice(headings[i]+1,headings[i+1]??lines.length).join("\n");
+  const reference=section.match(/\bFile\s+Number\s*:\s*(\d{2}\/\d{4,6})\b/i)?.[1];
+  const decisionValue=section.match(/\bDecision\s*:\s*(Decision Made|Granted(?:\s*\(Conditional\))?|Refused)(?=\s|$)/i)?.[1];
+  const rawDate=section.match(/\bDecision Date\s*:\s*(N\/A|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2}|\d{1,2}\/\d{1,2}\/20\d{2})\b/i)?.[1];
+  const decision_date=mapalertsDate(rawDate);
+  const registration_date=mapalertsDate(section.match(/\bReceived\s*:\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})\b/i)?.[1]);
+  const statusOnly=decisionValue==="Decision Made" && rawDate==="N/A";
+  if(!reference||!decisionValue||!rawDate||(!decision_date&&!statusOnly)||
+    (decision_date&&decision_date>week)||
+    (registration_date&&decision_date&&decision_date<registration_date)){
+   skipped++;continue;
+  }
+  const decision_text=/^refused$/i.test(decisionValue)?"Refused":
+   /^granted(?:\s*\(conditional\))?$/i.test(decisionValue)?
+    (/conditional/i.test(decisionValue)?"Granted (Conditional)":"Granted"):"Decision Made";
+  const record={reference,decision_date:decision_date||null,decision_text,
+   registration_date:registration_date||null,source_url:url,observed_week:week};
+  const previous=byRef.get(reference);
+  if(previous&&(previous.decision_date!==record.decision_date||previous.decision_text!==record.decision_text))
+   throw Error("Contradictory Cork County decisions "+reference);
+  byRef.set(reference,record);
+ }
+ return {decisions:[...byRef.values()],total:headings.length,week,skipped,
+   statusOnly:[...byRef.values()].filter(row=>row.decision_date===null).length};
+}

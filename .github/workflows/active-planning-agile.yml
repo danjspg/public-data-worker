@@ -36,6 +36,8 @@ jobs:
       - name: Process active Agile Planning source checks
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          # Do not send more requests to the explicitly blocking upstream API.
+          AGILE_ACCESS_BLOCKED: "true"
           ACTIVE_AGILE_WORKER_LIMIT: "5000"
           ACTIVE_AGILE_CONCURRENCY: "1"
           ACTIVE_AGILE_TIME_BUDGET_MS: "3000000"

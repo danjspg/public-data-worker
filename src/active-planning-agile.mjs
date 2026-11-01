@@ -5,6 +5,12 @@ const { Client } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
 if (!connectionString) throw new Error('WORKER_DATABASE_URL is required');
 
+// The approved recovery path uses independent council lists, not an Agile bypass.
+if (process.env.AGILE_ACCESS_BLOCKED === "true") {
+ console.log(JSON.stringify({source:"agile",status:"access_blocked",selected:0,completed:0,reason:"Upstream HTTP 403; official council fallback used separately"}));
+ process.exit(0);
+}
+
 const LIMIT = Math.max(1, Math.min(Number(process.env.ACTIVE_AGILE_WORKER_LIMIT || 1000), 5000));
 const CONCURRENCY = Math.max(1, Math.min(Number(process.env.ACTIVE_AGILE_CONCURRENCY || 6), 8));
 const TIME_BUDGET_MS = Math.max(60_000, Number(process.env.ACTIVE_AGILE_TIME_BUDGET_MS || 50 * 60 * 1000));
