@@ -45,7 +45,7 @@ if(DRY){
   const result=parseCorkMapalertsReceived(html,d.url);
   const decisions=parseCorkMapalertsDecisions(html,d.url);
   preview.push({week:d.week_ending,sha256:sha,headers:result.headers,newApplications:result.applications.length,
-   datedDecisions:decisions.decisions.length,decisionSamples:decisions.decisions.slice(0,8),
+   datedDecisions:decisions.decisions.length,decisionSamples:decisions.decisions.slice(0,8),diagnostics:decisions.diagnostics,
    otherEventsExcluded:result.skipped,samples:result.applications.slice(0,12).map(x=>({reference:x.reference,date:x.registration_date,type:x.application_type}))});
  }
  console.log(JSON.stringify({dryRun:true,discovered:docs.length,preview},null,2));process.exit(0);
