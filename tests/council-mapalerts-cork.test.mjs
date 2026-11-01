@@ -34,7 +34,7 @@ test("non-council page and decisions-only source fail closed",()=>{
  assert.throws(()=>parseCorkMapalertsReceived("<html>Wrong source</html>",url));
 });
 
-test("Cork MapAlerts decisions require dated evidence and never invent outcomes",()=>{
+test("Cork MapAlerts decisions preserve exact dates or neutral status without inventing outcomes",()=>{
  let html='<html><h2>Weekly Planning Alert, 19/10/2026</h2>'+
  '<p>New and decided planning application updates issued by Cork County Council on 19/10/2026</p>';
  const cases=[
@@ -52,9 +52,10 @@ test("Cork MapAlerts decisions require dated evidence and never invent outcomes"
  }
  const parsed=parseCorkMapalertsDecisions(html,url);
  assert.equal(parsed.total,5);
- assert.deepEqual(parsed.decisions.map(x=>x.reference),["26/2169","26/2170","26/2171"]);
- assert.deepEqual(parsed.decisions.map(x=>x.decision_text),["Decision Made","Refused","Granted (Conditional)"]);
+ assert.deepEqual(parsed.decisions.map(x=>x.reference),["26/2169","26/2170","26/2171","26/2172"]);
+ assert.deepEqual(parsed.decisions.map(x=>x.decision_text),["Decision Made","Refused","Granted (Conditional)","Decision Made"]);
  assert.equal(parsed.decisions[0].decision_date,"2026-10-15");
+ assert.equal(parsed.decisions[3].decision_date,null);
  assert.throws(()=>parseCorkMapalertsDecisions("<html>not the council</html>",url));
 });
 
