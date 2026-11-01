@@ -123,7 +123,7 @@ export function parseCorkMapalertsDecisions(html,url,cutoff=CORK_MAPALERTS_CUTOF
  for(let j=0;j<headings.length;j++){
   const section=lines.slice(headings[j]+1,headings[j+1]??lines.length).join("\n");
   const reference=section.match(/\bFile\s+Number\s*:\s*(\d{2}\/\d{4,6})\b/i)?.[1];
-  const decisionValue=section.match(/\bDecision\s*:\s*(Decision Made|Granted(?:\s*\(Conditional\))?|Refused)\b/i)?.[1];
+  const decisionValue=section.match(/\bDecision\s*:\s*(Decision Made|Granted(?:\s*\(Conditional\))?|Refused)(?=\s|$)/i)?.[1];
   const dateValue=section.match(/\bDecision Date\s*:\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})\b/i)?.[1];
   const decision_date=mapalertsDate(dateValue);
   const registration_date=mapalertsDate(section.match(/\bReceived\s*:\s*([A-Za-z]{3,9}\.?\s+\d{1,2},?\s+20\d{2})\b/i)?.[1]);
