@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {mapalertsDate,discoverCorkMapalertWeeks,parseCorkMapalertsReceived} from "../src/council-mapalerts-cork.mjs";
+import {mapalertsDate,discoverCorkMapalertWeeks,parseCorkMapalertsReceived,parseCorkMapalertsDecisions} from "../src/council-mapalerts-cork.mjs";
 const url="https://mapalerts.corkcoco.ie/en/alerts/item?view=form&ref=abcedf0123456789";
 test("find official weeks and reject off-domain alerts",()=>{
  const html='<a href="/en/alerts/item?view=form&amp;ref=abcedf0123456789">Weekly Planning Alert, 19/10/2026</a>'+
@@ -32,4 +32,28 @@ test("council month and dates reject invalid inputs",()=>{
 });
 test("non-council page and decisions-only source fail closed",()=>{
  assert.throws(()=>parseCorkMapalertsReceived("<html>Wrong source</html>",url));
+});
+
+test("Cork MapAlerts decisions require dated evidence and never invent outcomes",()=>{
+ let html='<html><h2>Weekly Planning Alert, 19/10/2026</h2>'+
+ '<p>New and decided planning application updates issued by Cork County Council on 19/10/2026</p>';
+ const cases=[
+  ["26/2169","Decision Made","Oct 15, 2026","Aug 14, 2026"],
+  ["26/2170","Refused","Oct 16, 2026","Aug 14, 2026"],
+  ["26/2171","Granted (Conditional)","Oct 16, 2026","Aug 14, 2026"],
+  ["26/2172","Decision Made","N/A","Aug 14, 2026"],
+  ["26/2173","Application Received","N/A","Oct 14, 2026"],
+ ];
+ for(const [ref,decision,date,received] of cases){
+  html+='<h3>Permission // Test development site, County Cork</h3>'+
+   '<p>Construction of a dwelling</p><p>File Number: '+ref+'</p>'+
+   '<p>Received: '+received+'</p><p>Decision Date: '+date+'</p>'+
+   '<p>Decision: '+decision+'</p>';
+ }
+ const parsed=parseCorkMapalertsDecisions(html,url);
+ assert.equal(parsed.total,5);
+ assert.deepEqual(parsed.decisions.map(x=>x.reference),["26/2169","26/2170","26/2171"]);
+ assert.deepEqual(parsed.decisions.map(x=>x.decision_text),["Decision Made","Refused","Granted (Conditional)"]);
+ assert.equal(parsed.decisions[0].decision_date,"2026-10-15");
+ assert.throws(()=>parseCorkMapalertsDecisions("<html>not the council</html>",url));
 });
