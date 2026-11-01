@@ -57,3 +57,22 @@ test("Cork MapAlerts decisions require dated evidence and never invent outcomes"
  assert.equal(parsed.decisions[0].decision_date,"2026-10-15");
  assert.throws(()=>parseCorkMapalertsDecisions("<html>not the council</html>",url));
 });
+
+test("weekly Decision Made with explicit N/A date publishes status only",()=>{
+ let html="<html><h2>Weekly Planning Alert, 26/10/2026</h2>"+
+ "<p>New and decided planning application updates issued by Cork County Council on 26/10/2026</p>";
+ for(const [reference,decision] of [["26/1926","Decision Made"],["26/1927","Application Received"]]){
+  html+="<h3>Permission // Some location, Co. Cork</h3>"+
+   "<p>Construction of dwelling house and ancillary works.</p>"+
+   "<p>File Number: "+reference+"</p><p>Received: Jul 20, 2026</p>"+
+   "<p>Decision Date: N/A</p><p>Decision: "+decision+"</p>";
+ }
+ const result=parseCorkMapalertsDecisions(html,url);
+ assert.equal(result.total,2);
+ assert.equal(result.decisions.length,1);
+ assert.equal(result.statusOnly,1);
+ assert.equal(result.decisions[0].reference,"26/1926");
+ assert.equal(result.decisions[0].decision_text,"Decision Made");
+ assert.equal(result.decisions[0].decision_date,null);
+ assert.equal(result.decisions[0].observed_week,"2026-10-26");
+});
