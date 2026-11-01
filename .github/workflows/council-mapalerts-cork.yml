@@ -1,4 +1,4 @@
-name: "[PUBLIC] Cork County MapAlerts weekly applications recovery"
+name: "[PUBLIC] Cork County official weekly application and decision recovery"
 on:
   pull_request:
     paths:
@@ -12,7 +12,7 @@ on:
       - "src/council-mapalerts-cork*.mjs"
   workflow_dispatch:
   schedule:
-    - cron: "15 7 * * 1,4"
+    - cron: "15 7 * * *"
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - name: Test council-only discovery and received-status filtering
+      - name: Validate council registration and decision-only evidence
         run: |
           node --check src/council-mapalerts-cork.mjs
           node --check src/council-mapalerts-cork-pilot.mjs
@@ -42,7 +42,7 @@ jobs:
           node src/council-mapalerts-cork-pilot.mjs
           node src/council-mapalerts-cork-sync.mjs --dry-run
 
-      - name: Stage Cork County official new registrations on worker
+      - name: Stage verified Cork County registrations and neutral decision events
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
