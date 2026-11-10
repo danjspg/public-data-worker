@@ -1,0 +1,31 @@
+name: "[PUBLIC] Agile v2 catch-up (offline only)"
+on:
+  workflow_dispatch:
+    inputs:
+      authority:
+        description: "Authority to prepare"
+        required: true
+        type: choice
+        options: [CORKCITY, DUBLINCITY, FINGAL, WEXFORD, DLR, CORKCOCO, SOUTHDUBLIN]
+permissions:
+  contents: read
+concurrency:
+  group: public-agile-v2-catchup
+  cancel-in-progress: false
+jobs:
+  catchup-offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Offline safety tests
+        run: node --test tests/agile-v2-catchup.test.mjs
+      - name: Run fail-closed catch-up worker
+        env:
+          AGILE_ACCESS_BLOCKED: "true"
+          AGILE_V2_LIVE_ENABLED: "false"
+          AGILE_V2_ACCESS_AUTHORISED: "false"
+        run: node src/agile-v2-catchup.mjs
