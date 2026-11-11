@@ -44,6 +44,9 @@ jobs:
         run: |
           node src/council-received-probe.mjs
           node src/council-received-sync.mjs --dry-run
+      - name: Audit Cork City public ArcGIS map and source dates (read only)
+        if: github.event_name == 'pull_request'
+        run: node src/council-received-corkcity-arcgis-probe.mjs
       - name: Stage council applications in Neon
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
