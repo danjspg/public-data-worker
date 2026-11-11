@@ -17,6 +17,7 @@ function appType(value){
  if(t==="permission for retention")return "Permission for Retention";
  if(t==="permission and retention")return "Permission and Retention";
  if(t==="permission consequent")return "Permission Consequent";
+ if(t==="outline permission")return "OUTLINE PERMISSION";
  return null; // Outline and unknown types are quarantined, not relabelled.
 }
 export function parseCorkCityAPAS(features,{cutoff,today,sourceUrl=CORKCITY_APAS_URL}){
