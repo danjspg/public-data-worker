@@ -17,7 +17,7 @@ test("only complete council registrations are admitted and applicant names never
 });
 test("unsupported type, missing descriptions and future dates are quarantined",()=>{
  const r=parseCorkCityAPAS([
- {attributes:{...row,appType:"OUTLINE PERMISSION"}},
+ {attributes:{...row,appType:"Unknown Planning Type"}},
  {attributes:{...row,description:"Short"}},
  {attributes:{...row,recievedDate:date(2026,11,25)}},
  {attributes:{...row,PlanningRefNo:"26/45158",recievedDate:date(2026,11,6),appType:"RETENTION"}}
@@ -43,4 +43,9 @@ test("partial calendar weeks cannot carry future publication dates",()=>{
  const chunks=chunkByWeek(parsed.applications,"2026-11-11",2);
  assert.deepEqual(chunks.map(x=>({week:x.week_ending,count:x.applications.length})),[
  {week:"2026-11-11",count:1},{week:"2026-11-08",count:2}]);
+});
+
+test("Cork City outline permission is preserved as its official database value",()=>{
+ const r=parseCorkCityAPAS([{attributes:{...row,appType:"OUTLINE PERMISSION"}}],opts);
+ assert.equal(r.applications[0].application_type,"OUTLINE PERMISSION");
 });
