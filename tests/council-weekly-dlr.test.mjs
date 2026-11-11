@@ -25,3 +25,15 @@ test("bad dates and mismatched source counts fail",()=>{
  assert.equal(dlrDate("31/02/2026"),null);
  assert.throws(()=>parseDlrReceived("missing official register",url));
 });
+
+test("ignore non-application reference markers inside council PDF prose, without weakening official row count",()=>{
+ const text="PLANNING APPLICATIONS RECEIVED FOR WEEK 41 2026\n"+
+ "DATED 04/10/2026 TO 10/10/2026\n- Total Application Registered = 2\n"+
+ item("D26A/0738/WEB","05/10/2026").replace("Proposal: Construction of a substantial purpose built commercial premises with accompanying access and related works.",
+ "Proposal: Construction of a substantial purpose built commercial premises with accompanying access and related works.\nReg. Ref.: referenced in the narrative only")+
+ "\n"+item("DZ26A/0750/WEB","07/10/2026")+
+ "\nEND OF PLANNING APPLICATIONS RECEIVED FOR WEEK 41 2026";
+ const parsed=parseDlrReceived(text,url);
+ assert.equal(parsed.headers,2);
+ assert.equal(parsed.applications.length,2);
+});

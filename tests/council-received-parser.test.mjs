@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {receivedDate,parseWexfordReceived,parseSouthDublinReceived,fingalReceivedCandidates,dublinCityReceivedCandidates} from "../src/council-received-parser.mjs";
+import {receivedDate,parseWexfordReceived,parseSouthDublinReceived,cleanSouthDublinField,fingalReceivedCandidates,dublinCityReceivedCandidates} from "../src/council-received-parser.mjs";
 test("reject impossible calendar dates",()=>{assert.equal(receivedDate("05/10/2026"),"2026-10-05");assert.equal(receivedDate("9 Oct 2026"),"2026-10-09");assert.equal(receivedDate("31/02/2026"),null);});
 test("Wexford valid original applications only, not cited older references",()=>{
  const sample="Valid Applications Received from 05 Oct 2026 To 11 Oct 2026\n"+
@@ -24,4 +24,16 @@ test("Word references are discovery-only, never create speculative rows",()=>{
  assert.equal(fingalReceivedCandidates("F26A/0899E").applications.length,0);
  assert.equal(dublinCityReceivedCandidates("WEB3458/26Application TYPE WEB1315/26Additional").candidate_references.length,2);
  assert.equal(dublinCityReceivedCandidates("WEB3458/26").applications.length,0);
+});
+test("South Dublin page headers are stripped without losing planning proposal content",()=>{
+ const stamp="APPLICATIONS RECEIVED LIST Page 5 Of 9 Under Section 34 of the Act, the applications for permission may be granted permission, subject to or without conditions, or refused. The use of the personal details of planning applicants, including for marketing purposes, may be unlawful under the Data Protection Acts 1988 to 2003 and may result in action by the Data Protection Commissioner against the sender, including prosecution. Reg. Ref. Date Received Application Type Submission Type";
+ assert.equal(cleanSouthDublinField("Construction of a new "+stamp+" warehouse with vehicular access."),"Construction of a new warehouse with vehicular access.");
+ assert.equal(cleanSouthDublinField("Construction of a new APPLICATIONS RECEIVED LIST Page 5 Of 9 without footer"),null);
+ const sample="APPLICATIONS RECEIVED LIST Page 1 Of 9\n"+
+   "SD26A/0260W 09 Nov 2026 Permission New Application\n"+
+   "Applicant: Applicant\nLocation: Whitehall Road, Dublin 12\n"+
+   "Description: Construction of a new "+stamp+" warehouse and associated roadway in Dublin.\n";
+ const result=parseSouthDublinReceived(sample,"https://planning.southdublin.ie/Home/ViewWeeklyListDocument/4050");
+ assert.equal(result.applications.length,1);
+ assert.equal(result.applications[0].proposal,"Construction of a new warehouse and associated roadway in Dublin.");
 });

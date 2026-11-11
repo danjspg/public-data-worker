@@ -12,6 +12,15 @@ export function receivedDate(v){
  return d.getUTCFullYear()===y&&d.getUTCMonth()===mon&&d.getUTCDate()===day?d.toISOString().slice(0,10):null;
 }
 const norm=x=>String(x||"").replace(/\s+/g," ").trim();
+// A South Dublin PDF can repeat a full legal header mid-sentence when a
+// description crosses pages. Removing only the fully matched page furniture
+// prevents false planning text; an incomplete header makes the row ineligible.
+const SOUTH_DUBLIN_PAGE_FURNITURE=/APPLICATIONS RECEIVED LIST\s+Page\s+\d+\s+Of\s+\d+\s+Under Section 34 of the Act,[\s\S]*?Reg\.\s*Ref\.\s+Date Received\s+Application Type\s+Submission Type/gi;
+export function cleanSouthDublinField(value){
+ const cleaned=norm(String(value||"").replace(SOUTH_DUBLIN_PAGE_FURNITURE," "));
+ return /APPLICATIONS RECEIVED LIST|Under Section 34 of the Act|The use of the personal details of planning applicants/i.test(cleaned)?null:cleaned;
+}
+
 function field(body,label,endLabels){
  const m=new RegExp("(?:^|\\n)\\s*"+label+"\\s*:\\s*","im").exec(body);
  if(!m)return "";
@@ -53,8 +62,8 @@ export function parseSouthDublinReceived(text,url){
   if(!date||date<CUTOFF||h[4].toLowerCase()!=="new application"){skipped++;continue;}
   const body=raw.slice(h.index+h[0].length,hits[i+1]?.index??raw.length);
   const x={reference:h[1].toUpperCase(),web_reference:h[1].toUpperCase(),registration_date:date,
-   application_type:norm(h[3]),location:field(body,"Location",["Description","Applicant"]),
-   proposal:field(body,"Description",["Applicant","Location"]),source_url:url};
+   application_type:norm(h[3]),location:cleanSouthDublinField(field(body,"Location",["Description","Applicant"])),
+   proposal:cleanSouthDublinField(field(body,"Description",["Applicant","Location"])),source_url:url};
   if(!complete(x)||seen.has(x.reference)){skipped++;continue;}
   seen.add(x.reference);applications.push(x);
  }

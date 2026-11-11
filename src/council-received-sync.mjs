@@ -150,7 +150,7 @@ try{
    [JOB,key,JSON.stringify(doc)]);
   seeded+=q.rowCount;
  }
- const {rows}=await db.query("select id,input,attempts from work_items where job_type=$1 and status='pending' and applied_at is null and available_at<=now() and input->>'week_ending' >= $2 order by input->>'week_ending' desc,id desc limit $3",[JOB,CUTOFF,LIMIT]);
+ const {rows}=await db.query("select id,input,attempts from work_items where job_type=$1 and status='pending' and applied_at is null and available_at<=now() and input->>'week_ending' >= $2 and input->>'authority' in ('WEXFORD','SOUTHDUBLIN','FINGAL','DUBLINCITY') order by input->>'week_ending' desc,id desc limit $3",[JOB,CUTOFF,LIMIT]);
  for(const item of rows){
   try{
    const {sha256,parsed}=await parseDocument(item.input);
