@@ -82,8 +82,20 @@ for(const probe of probes){
   const at=text.indexOf(ref);
   return {ref,maskedContext:safe(text.slice(Math.max(0,at-90),at+220)).replace(/\s+/g," ").slice(0,250)};
  });
+ const structure=probe.council==="DUBLINCITY"?(()=>{
+   const rx=/(?<![A-Za-z0-9])((?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26)\s*APPLICATION\s*TYPE\b/gi;
+   const starts=[...text.matchAll(rx)];
+   const fields=/APPLICATION\s*TYPE|REGISTRATION\s*DATE|ADDITIONAL\s*INFORMATION|PROPOSAL\s*:|LOCATION\s*:|ADDRESS\s*:|DECISION|APPEAL|DATE\s*:/gi;
+   return {recordHeaders:starts.length,examples:starts.slice(0,7).map((m,i)=>{
+     const fragment=text.slice(m.index,Math.min(m.index+1100,starts[i+1]?.index??text.length));
+     return {reference:m[1].toUpperCase(),fieldSequence:[...fragment.matchAll(fields)].slice(0,15).map(x=>x[0].replace(/\s+/g," ").toUpperCase()),
+       maskedStart:safe(fragment.slice(0,550)).replace(/\s+/g," ").slice(0,550),
+       hasDate:/REGISTRATION\s*DATE\s*\d{2}\/\d{2}\/2026/i.test(fragment),
+       length:fragment.length};
+   })};
+ })():null;
  report.push({council:probe.council,source:probe.url,bytesOfExtractedText:text.length,uniqueReferences:refs.length,
   sampleReferences:refs.slice(0,10),maskedHeader:safe(text.slice(0,650)).replace(/\s+/g," ").slice(0,500),
-  contexts});
+  contexts,structure});
 }
 console.log(JSON.stringify({readOnly:true,wexfordDocLinks:wex.length,southDublinOnFirstPage:south.length,report},null,2));
