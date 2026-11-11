@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFile as cb} from 'node:child_process';
 import {promisify} from 'node:util';
-import {findWexfordDecisionLinks,parseWexfordDecisionText} from './council-weekly-wexford.mjs';
+import {findWexfordDecisionLinks,parseWexfordDecisionText,wexfordWeekEndingFromUrl} from './council-weekly-wexford.mjs';
 const exec=promisify(cb), {Client}=pg, JOB='council_weekly_decisions';
 // Recover recent lifecycle gaps only. Decisions on older applications may still
 // qualify if they were issued after this date.
@@ -38,16 +38,12 @@ async function extract(url){
    throw Error(errs.join('; '));
  }finally{await rm(dir,{recursive:true,force:true});}
 }
-function weekEnding(url){
- const m=decodeURIComponent(url).match(/w\.e\s*(\d{1,2})\.(\d{1,2})\.(20\d{2})/i);
- return m?m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'):null;
-}
 async function discover(){
  const docs=[],years=[];
  for(let year=new Date().getUTCFullYear();year>=START;year--){
    const html=await fetchOfficial(INDEX(year));
    const links=findWexfordDecisionLinks(html,INDEX(year));
-   docs.push(...links.map(url=>({url,week:weekEnding(url),year})));
+   docs.push(...links.map(url=>({url,week:wexfordWeekEndingFromUrl(url),year})));
    years.push({year,documents:links.length});
  }
  return {years,docs:[...new Map(docs.map(d=>[d.url,d])).values()]
@@ -62,12 +58,30 @@ if(process.argv.includes('--dry-run')){
 }
 if(!process.env.WORKER_DATABASE_URL)throw Error('WORKER_DATABASE_URL required');
 const db=new Client({connectionString:process.env.WORKER_DATABASE_URL,ssl:{rejectUnauthorized:false}});
-await db.connect();let seeded=0,complete=0,failed=0;const reports=[];
+await db.connect();let seeded=0,recovered=0,complete=0,failed=0;const reports=[];
 try{
  for(const {url,week,year} of docs){
    const key='WEXFORD:'+createHash('sha256').update(url).digest('hex').slice(0,24);
    const r=await db.query("insert into work_items(job_type,work_key,input,status,available_at,updated_at) values($1,$2,$3::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do nothing returning id",
     [JOB,key,JSON.stringify({authority:'WEXFORD',url,week_ending:week,archive_year:year})]);seeded+=r.rowCount;
+   // Earlier runs stored completed documents without an official week. Repair
+   // only verified matching 2026+ official URLs in the recovery window, so
+   // the guarded production apply can see them without refetching documents.
+   if(!r.rowCount){
+     const repaired=await db.query(`
+       update work_items set
+         input=jsonb_set(input,'{week_ending}',to_jsonb($3::text),true),
+         result=jsonb_set(result,'{week_ending}',to_jsonb($3::text),true),
+         updated_at=now()
+       where job_type=$1 and work_key=$2 and input->>'authority'='WEXFORD'
+         and input->>'url'=$4 and input->>'week_ending' is null
+         and result->>'week_ending' is null and result->>'url'=$4
+         and result->>'ok'='true' and status='completed'
+         and applied_at is null
+       returning id
+     `,[JOB,key,week,url]);
+     recovered+=repaired.rowCount;
+   }
  }
  const {rows}=await db.query("select id,input,attempts from work_items where job_type=$1 and status='pending' and applied_at is null and available_at<=now() and input->>'authority'='WEXFORD' and input->>'week_ending' >= $3 order by input->>'week_ending' desc nulls last,id desc limit $2",[JOB,LIMIT,RECOVERY_FROM_DATE]);
  for(const item of rows){
@@ -86,6 +100,6 @@ try{
    }
  }
  const counts=await db.query("select status,count(*)::integer as n from work_items where job_type=$1 and input->>'authority'='WEXFORD' group by status",[JOB]);
- console.log(JSON.stringify({indexed:docs.length,years,seeded,complete,failed,queue:counts.rows,reports},null,2));
+ console.log(JSON.stringify({indexed:docs.length,years,seeded,recovered,complete,failed,queue:counts.rows,reports},null,2));
  if(failed&&!complete)process.exitCode=1;
 }finally{await db.end();}
