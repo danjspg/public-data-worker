@@ -104,9 +104,19 @@ export function parseDublinCityReceived(text,url,weekEnding) {
   const received=receivedDate(dateMark[1]);
   if(!received||received<weekStart||received>weekEnding){skipped++;continue;}
   const meta=section.slice(0,dateMark.index);
-  const appType=/^\s*(Permission\s+and\s+Retention|Permission\s+for\s+Retention|Permission|Retention)\b/i.exec(meta);
+  // Dublin City DOCX joins field labels without whitespace:
+  // "PermissionApplicant Name ... Location 13 Quay ... Registration DATE".
+  // The site location is ONLY the explicit Location field, never the
+  // intervening applicant name. "PermissionDecision" is not a new filing.
+  const appType=/^\s*(Retention\s+Permission|Permission\s+and\s+Retention|Permission\s+for\s+Retention|Permission|Retention)(?=\s*(?:Applicant|Decision|Location))/i.exec(meta);
   if(!appType){skipped++;continue;}
-  const location=norm(meta.slice(appType[0].length).replace(/^\s*(?:Site\s+Address|Location|Address)\s*:?\s*/i,""));
+  const nameField=/Applicant(?:\s*Name)?/i.exec(meta.slice(appType[0].length));
+  const locationField=/Location\s*:?\s*/i.exec(meta);
+  if(!nameField||!locationField||locationField.index<appType[0].length+nameField.index+nameField[0].length||
+      /\bDecision\b/i.test(meta.slice(appType[0].length,locationField.index))){
+   skipped++;continue;
+  }
+  const location=norm(meta.slice(locationField.index+locationField[0].length));
   if(location.length<7||location.length>1200||!/(?:\b\d{1,4}\b|\bDublin\b|\bD0?[1-9]\d?\b|\bRoad\b|\bStreet\b|\bLane\b|\bAvenue\b|\bPark\b|\bSquare\b|\bQuay\b)/i.test(location)){
    skipped++;continue;
   }
@@ -120,7 +130,10 @@ export function parseDublinCityReceived(text,url,weekEnding) {
     /\b(?:APPLICATIONS RECEIVED|DECISIONS FOR WEEK|APPEALS NOTIFIED|REGISTRATION DATE|PROPOSAL\s*:)\b/i.test(proposal)){
     skipped++;continue;
   }
-  const application_type=appType[1].replace(/\s+/g," ").toLowerCase().replace(/\b\w/g,x=>x.toUpperCase());
+  const sourceType=appType[1].replace(/\s+/g," ").trim().toLowerCase();
+  const application_type=sourceType==="permission"?"Permission":
+    sourceType==="permission and retention"?"Permission and Retention":
+    sourceType==="permission for retention"?"Permission for Retention":"Retention";
   const row={reference:ref,web_reference:ref,registration_date:received,application_type,
    location,proposal,source_url:url};
   const previous=seen.get(ref);
