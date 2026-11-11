@@ -77,3 +77,53 @@ export function dublinCityReceivedCandidates(text){
  const references=[...new Set([...String(text||"").matchAll(/(?<![A-Za-z0-9])(?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26(?!\d)/gi)].map(x=>x[0].toUpperCase()))];
  return {applications:[],candidate_references:references,headers:references.length,skipped:references.length};
 }
+
+/**
+ * Conservative extractor for Dublin City's official five-area weekly DOCX.
+ * Accept only application headers immediately followed by APPLICATION TYPE;
+ * cited historical references, FI notices and decisions are excluded by
+ * mandatory new registration dates within the document's publication week.
+ * Never infer missing date, address, type or proposal metadata.
+ */
+export function parseDublinCityReceived(text,url,weekEnding) {
+ const raw=String(text||"").replace(/\r/g,"").replace(/\f/g,"\n");
+ const markers=[...raw.matchAll(/(?<![A-Za-z0-9])((?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26)\s*APPLICATION\s*TYPE\b/gi)];
+ if(!markers.length||markers.length>500)throw Error("Dublin City official DOCX application headings unavailable");
+ if(!/^2026-\d{2}-\d{2}$/.test(weekEnding)||Number.isNaN(Date.parse(weekEnding+"T00:00:00Z")))
+  throw Error("Dublin City official document week unavailable");
+ const weekStart=new Date(Date.parse(weekEnding+"T00:00:00Z")-6*86400000).toISOString().slice(0,10);
+ const applications=[],seen=new Map();let skipped=0;
+ for(let i=0;i<markers.length;i++){
+  const ref=markers[i][1].toUpperCase();
+  const section=raw.slice(markers[i].index+markers[i][0].length,markers[i+1]?.index??raw.length);
+  const dateMark=/\bREGISTRATION\s*DATE\s*([0-3]\d\/[01]\d\/20\d{2})\b/i.exec(section);
+  if(!dateMark){skipped++;continue;}
+  const received=receivedDate(dateMark[1]);
+  if(!received||received<weekStart||received>weekEnding){skipped++;continue;}
+  const meta=section.slice(0,dateMark.index);
+  const appType=/^\s*(Permission\s+and\s+Retention|Permission\s+for\s+Retention|Permission|Retention)\b/i.exec(meta);
+  if(!appType){skipped++;continue;}
+  const location=norm(meta.slice(appType[0].length).replace(/^\s*(?:Site\s+Address|Location|Address)\s*:?\s*/i,""));
+  if(location.length<7||location.length>1200||!/(?:\b\d{1,4}\b|\bDublin\b|\bD0?[1-9]\d?\b|\bRoad\b|\bStreet\b|\bLane\b|\bAvenue\b|\bPark\b|\bSquare\b|\bQuay\b)/i.test(location)){
+   skipped++;continue;
+  }
+  const remainder=section.slice(dateMark.index+dateMark[0].length);
+  const proposals=[...remainder.matchAll(/\bPROPOSAL\s*:\s*/gi)];
+  if(proposals.length!==1){skipped++;continue;}
+  const textAfter=remainder.slice(proposals[0].index+proposals[0][0].length);
+  const proposal=norm(textAfter.split(/_{15,}/)[0]).slice(0,3001);
+  // Never treat a following heading, council footer, or an FI-only notice as a proposal.
+  if(proposal.length<24||proposal.length>3000||
+    /\b(?:APPLICATIONS RECEIVED|DECISIONS FOR WEEK|APPEALS NOTIFIED|REGISTRATION DATE|PROPOSAL\s*:)\b/i.test(proposal)){
+    skipped++;continue;
+  }
+  const application_type=appType[1].replace(/\s+/g," ").replace(/\b\w/g,x=>x.toUpperCase());
+  const row={reference:ref,web_reference:ref,registration_date:received,application_type,
+   location,proposal,source_url:url};
+  const previous=seen.get(ref);
+  if(previous && JSON.stringify(previous)!==JSON.stringify(row))
+   throw Error("Conflicting Dublin City received rows "+ref);
+  if(!previous){seen.set(ref,row);applications.push(row);}
+ }
+ return {applications,headers:markers.length,skipped,candidate_references:[]};
+}
