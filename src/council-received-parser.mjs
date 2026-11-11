@@ -98,8 +98,8 @@ export function parseDublinCityReceived(text,url,weekEnding) {
   const section=raw.slice(markers[i].index+markers[i][0].length,markers[i+1]?.index??raw.length);
   // Flattened DOCX runs often join the final postcode character directly
   // onto the field label (e.g. "D04 N7KSRegistration DATE"). Do not
-  // require a word boundary before REGISTRATION.
-  const dateMark=/REGISTRATION\s*DATE\s*([0-3]\d\/[01]\d\/20\d{2})\b/i.exec(section);
+  // require word boundaries around REGISTRATION DATE, including after the year.
+  const dateMark=/REGISTRATION\s*DATE\s*([0-3]\d\/[01]\d\/20\d{2})/i.exec(section);
   if(!dateMark||dateMark.index>500){skipped++;continue;}
   const received=receivedDate(dateMark[1]);
   if(!received||received<weekStart||received>weekEnding){skipped++;continue;}
