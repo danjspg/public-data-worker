@@ -120,7 +120,7 @@ export function parseDublinCityReceived(text,url,weekEnding) {
     /\b(?:APPLICATIONS RECEIVED|DECISIONS FOR WEEK|APPEALS NOTIFIED|REGISTRATION DATE|PROPOSAL\s*:)\b/i.test(proposal)){
     skipped++;continue;
   }
-  const application_type=appType[1].replace(/\s+/g," ").replace(/\b\w/g,x=>x.toUpperCase());
+  const application_type=appType[1].replace(/\s+/g," ").toLowerCase().replace(/\b\w/g,x=>x.toUpperCase());
   const row={reference:ref,web_reference:ref,registration_date:received,application_type,
    location,proposal,source_url:url};
   const previous=seen.get(ref);
