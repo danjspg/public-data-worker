@@ -38,7 +38,12 @@ jobs:
           node --check src/council-weekly-dublincity.mjs
           node --check src/council-weekly-dublincity-sync.mjs
           node --test tests/council-weekly-dublincity.test.mjs
+      # A single malformed/ambiguous area file must not block processing of
+      # every other council area on scheduled production runs. The staging
+      # worker already quarantines individual failures and fails closed if
+      # nothing can be processed.
       - name: Validate five live official documents without writes
+        if: github.event_name == 'pull_request'
         run: node src/council-weekly-dublincity-sync.mjs --dry-run
       - name: Stage council decisions in Neon worker only
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
