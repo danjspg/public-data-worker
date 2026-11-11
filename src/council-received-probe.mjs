@@ -82,7 +82,23 @@ for(const probe of probes){
   const at=text.indexOf(ref);
   return {ref,maskedContext:safe(text.slice(Math.max(0,at-90),at+220)).replace(/\s+/g," ").slice(0,250)};
  });
- report.push({council:probe.council,source:probe.url,bytesOfExtractedText:text.length,uniqueReferences:refs.length,
+ const structure=probe.council==="FINGAL"?(()=>{
+   const lines=text.split(/\n/);
+   const ref=/\b(?:FW?\d{2}[AB]\/\d{4}E?|LRD\d{4}\/S3E?)\b/gi;
+   const date=/\b\d{2}\/\d{2}\/20\d{2}\b/g;
+   const label=/\b(?:APPLICANT|APPLICATION|REFERENCE|RECEIVED|INFORMATION|PERMISSION|RETENTION|DECISION|INVALID|NEW|LOCATION|PROPOSAL|DESCRIPTION|ADDRESS)\b/gi;
+   const keywordCounts={};
+   const excerpt=lines.slice(0,180).map((line,i)=>{
+     for(const m of line.matchAll(label))keywordCounts[m[0].toUpperCase()]=(keywordCounts[m[0].toUpperCase()]||0)+1;
+     const tokenTags=[...line.matchAll(label)].slice(0,9).map(x=>x[0].toUpperCase());
+     const refs=[...line.matchAll(ref)].map(x=>x[0].toUpperCase());
+     const dates=[...line.matchAll(date)].map(x=>x[0]);
+     if(!tokenTags.length&&!refs.length&&!dates.length)return null;
+     return {line:i,tags:tokenTags,refs,dates,masked:safe(line).replace(/\s+/g," ").slice(0,160)};
+   }).filter(Boolean).slice(0,75);
+   return {lineCount:lines.length,keywords:keywordCounts,excerpt};
+ })():null;
+ report.push({council:probe.council,source:probe.url,structure,bytesOfExtractedText:text.length,uniqueReferences:refs.length,
   sampleReferences:refs.slice(0,10),maskedHeader:safe(text.slice(0,650)).replace(/\s+/g," ").slice(0,500),
   contexts});
 }
