@@ -51,7 +51,13 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
  // exact official number of registration entries. Never silently accept a
  // true mismatch in application rows.
  const fragments=section.split(/\bReg\.\s*Ref\.\s*:\s*/i).slice(1);
- const pieces=fragments.filter(piece=>/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s|$)/i.test(piece.trim()));
+ const validHeader=/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s|$)/i;
+ const pieces=[];
+ for(const fragment of fragments){
+   if(validHeader.test(fragment.trim()))pieces.push(fragment);
+   else if(pieces.length)pieces[pieces.length-1]+="\nReg. Ref.: "+fragment;
+   else throw Error("Unexpected DLR register text before first application");
+ }
  if(pieces.length!==total)throw Error("DLR actual register count "+pieces.length+" != official "+total+" (raw fragments "+fragments.length+")");
  let excluded=0;const applications=[],seen=new Map();
  for(const piece of pieces){
