@@ -45,8 +45,14 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
  const section=raw.slice(a,b);
  const total=Number(section.match(/Total Application Registered\s*=\s*(\d+)/i)?.[1]);
  if(!Number.isInteger(total)||total<1||total>250)throw Error("DLR official list has no valid total");
- const pieces=section.split(/\bReg\.\s*Ref\.\s*:\s*/i).slice(1);
- if(pieces.length!==total)throw Error("DLR actual list row count "+pieces.length+" != official "+total);
+ // Some PDFs repeat the literal "Reg. Ref.:" inside text, splitting
+ // descriptions into additional fragments. Count only fragments beginning
+ // with an actual DLR application reference, and still require the council's
+ // exact official number of registration entries. Never silently accept a
+ // true mismatch in application rows.
+ const fragments=section.split(/\bReg\.\s*Ref\.\s*:\s*/i).slice(1);
+ const pieces=fragments.filter(piece=>/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s|$)/i.test(piece.trim()));
+ if(pieces.length!==total)throw Error("DLR actual register count "+pieces.length+" != official "+total+" (raw fragments "+fragments.length+")");
  let excluded=0;const applications=[],seen=new Map();
  for(const piece of pieces){
   const ref=piece.match(/^\s*([A-Z]{1,4}\d{2}[A-Z]\/\d{4}(?:\/WEB)?)/i)?.[1]?.toUpperCase();
