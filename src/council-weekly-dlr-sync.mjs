@@ -47,6 +47,14 @@ const db=new Client({connectionString:process.env.WORKER_DATABASE_URL,ssl:{rejec
 await db.connect();
 let seeded=0,completed=0,failed=0;const reports=[];
 try{
+ // The generic received-list worker previously claimed DLR jobs, failed its
+ // host allowlist check, and exhausted their retries. Only the DLR-specific
+ // worker may recover these exact, known-safe failures. Requeue once: a later
+ // parser/network failure uses a different reason and will not loop here.
+ const {rows:recovered}=await db.query(
+  "update work_items set status='pending',attempts=0,last_error=null,available_at=now(),updated_at=now() where job_type=$1 and input->>'authority'='DLR' and status='failed' and last_error='Nonofficial council source rejected' and input->>'week_ending'>='2026-08-01' and input->>'url' like 'https://www.dlrcoco.ie/sites/dlrcoco/files/%' returning id",
+  [JOB]);
+ if(recovered.length)console.log(JSON.stringify({dlrIncorrectlyClaimedJobsRecovered:recovered.length}));
  for(const d of docs){
   const key="DLR:"+createHash("sha256").update(d.url).digest("hex").slice(0,24);
   const r=await db.query("insert into work_items(job_type,work_key,input,status,available_at,updated_at) values($1,$2,$3::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do nothing returning id",
