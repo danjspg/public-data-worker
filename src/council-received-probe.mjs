@@ -32,16 +32,16 @@ async function convert(url,mode){
    const {stdout}=await exec("antiword",["-w","0",file],{timeout:30000,maxBuffer:15000000});
    try{
      const {stdout:db}=await exec("antiword",["-x","db",file],{timeout:30000,maxBuffer:15000000});
-     const rows=[...db.matchAll(/<row\\b[^>]*>([\\s\\S]*?)<\\/row>/gi)];
-     const tables=[...db.matchAll(/<(?:informaltable|table)\\b/gi)];
-     const firstRows=rows.slice(0,14).map((r,i)=>({row:i,cells:[...r[1].matchAll(/<entry\\b[^>]*>([\\s\\S]*?)<\\/entry>/gi)]
-        .map(m=>m[1].replace(/<[^>]+>/g," ").replace(/\\s+/g," ").trim())
-        .map(cell=>({length:cell.length,refs:[...cell.matchAll(/\\b(?:FW?\\d{2}[AB]\\/\\d{4}E?|LRD\\d{4}\\/S3E?)\\b/gi)].slice(0,3).map(x=>x[0]),
-        dates:[...cell.matchAll(/\\b\\d{2}\\/\\d{2}\\/20\\d{2}\\b/g)].slice(0,4).map(x=>x[0]),
+     const rows=[...db.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/gi)];
+     const tables=[...db.matchAll(/<(?:informaltable|table)\b/gi)];
+     const firstRows=rows.slice(0,14).map((r,i)=>({row:i,cells:[...r[1].matchAll(/<entry\b[^>]*>([\s\S]*?)<\/entry>/gi)]
+        .map(m=>m[1].replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim())
+        .map(cell=>({length:cell.length,refs:[...cell.matchAll(/\b(?:FW?\d{2}[AB]\/\d{4}E?|LRD\d{4}\/S3E?)\b/gi)].slice(0,3).map(x=>x[0]),
+        dates:[...cell.matchAll(/\b\d{2}\/\d{2}\/20\d{2}\b/g)].slice(0,4).map(x=>x[0]),
         status:[...cell.matchAll(/ADDITIONAL INFORMATION RECEIVED|DECISION MADE|INVALID|PERMISSION|RETENTION|APPLICATIONS RECEIVED/gi)].slice(0,5).map(x=>x[0]),
         sample:safe(cell).slice(0,140)}))}));
-     fingalDocbookStats={bytes:db.length,tables:tables.length,rows:rows.length,entries:(db.match(/<entry\\b/gi)||[]).length,preview:firstRows,
-       tagSequence:[...db.matchAll(/<(informaltable|table|tgroup|tbody|row|entry)\\b/gi)].slice(0,35).map(x=>x[1])};
+     fingalDocbookStats={bytes:db.length,tables:tables.length,rows:rows.length,entries:(db.match(/<entry\b/gi)||[]).length,preview:firstRows,
+       tagSequence:[...db.matchAll(/<(informaltable|table|tgroup|tbody|row|entry)\b/gi)].slice(0,35).map(x=>x[1])};
    }catch(e){fingalDocbookStats={error:String(e.message||e).slice(0,180)};}
    return stdout;
   }
