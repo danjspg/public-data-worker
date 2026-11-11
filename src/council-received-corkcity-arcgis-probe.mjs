@@ -94,5 +94,35 @@ for(const target of targets.slice(0,7)){
   }
  }catch(e){report.errors.push({stage:"service",name:target.name,error:String(e.message||e).slice(0,130)})}
 }
+// Inspect the precise APAS *application dates*, not just layer edit timestamps.
+const APAS="https://services-eu1.arcgis.com/f0ZQOHXBIeLonX0V/arcgis/rest/services/PlanningPolygonAPAS_view/FeatureServer/0";
+report.apasFreshness={};
+const relevant=["recievedDate","submissionDate","decisionDate","fiRecievedDate","EditDate"];
+for(const field of relevant){
+ const u=new URL(APAS+"/query");
+ for(const [k,v] of Object.entries({f:"json",where:"1=1",
+   outFields:"PlanningRefNo,recievedDate,submissionDate,decisionDate,appType,appStatus,location,description",
+   orderByFields:field+" DESC",resultRecordCount:"3",returnGeometry:"false"}))u.searchParams.set(k,v);
+ try{
+  const d=await json(u);
+  report.apasFreshness[field]={rows:(d.features||[]).slice(0,3).map(x=>{
+   const a=x.attributes||{};
+   return {reference:String(a.PlanningRefNo??"").slice(0,28),
+    received:fmt(a.recievedDate),submitted:fmt(a.submissionDate),
+    decided:fmt(a.decisionDate),status:String(a.appStatus||"").slice(0,40),
+    type:String(a.appType||"").slice(0,35),
+    locationLength:String(a.location||"").length,
+    descriptionLength:String(a.description||"").length};
+  }), exceededTransferLimit:d.exceededTransferLimit||false};
+ }catch(e){report.apasFreshness[field]={error:String(e.message||e).slice(0,160)}}
+}
+for(const day of ["2026-10-13","2026-11-01","2026-11-08"]){
+ const u=new URL(APAS+"/query");
+ for(const [k,v] of Object.entries({f:"json",
+   where:"recievedDate >= TIMESTAMP '"+day+" 00:00:00'",
+   returnCountOnly:"true"}))u.searchParams.set(k,v);
+ try{const d=await json(u);report.apasFreshness["receivedSince"+day]={count:d.count}}
+ catch(e){report.apasFreshness["receivedSince"+day]={error:String(e.message||e).slice(0,160)}}
+}
 report.requests=requests;
 console.log(JSON.stringify(report,null,2));
