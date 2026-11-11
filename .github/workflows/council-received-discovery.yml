@@ -4,6 +4,7 @@ on:
     paths:
       - ".github/workflows/council-received-discovery.yml"
       - "src/council-received-*.mjs"
+      - "src/council-fingal-arcgis-probe.mjs"
       - "tests/council-received-*.test.mjs"
   push:
     branches: [main]
@@ -44,6 +45,9 @@ jobs:
         run: |
           node src/council-received-probe.mjs
           node src/council-received-sync.mjs --dry-run
+      - name: Inspect Fingal council open-data freshness without writes
+        if: github.event_name == 'pull_request'
+        run: node src/council-fingal-arcgis-probe.mjs
       - name: Stage council applications in Neon
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
