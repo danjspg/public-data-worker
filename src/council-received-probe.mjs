@@ -8,6 +8,7 @@ import {promisify} from "node:util";
 import {dublinDocLinks,dublinDocxXmlText,DUBLIN_CITY_INDEX} from "./council-weekly-dublincity.mjs";
 import {FINGAL_INDEX} from "./council-weekly-fingal.mjs";
 const exec=promisify(cb);
+let fingalDocbookStats=null;
 const WEXFORD="https://www.wexfordcoco.ie/planning/planning-applications/planning-lists/planning-lists-for-2026";
 const SOUTH="https://planning.southdublin.ie/Home/WeeklyLists";
 async function fetchSource(url){
@@ -28,7 +29,21 @@ async function convert(url,mode){
    const {stdout}=await exec("pdftotext",["-raw",file,"-"],{timeout:30000,maxBuffer:15000000});return stdout;
   }
   if(mode==="doc"){
-   const {stdout}=await exec("antiword",["-w","0",file],{timeout:30000,maxBuffer:15000000});return stdout;
+   const {stdout}=await exec("antiword",["-w","0",file],{timeout:30000,maxBuffer:15000000});
+   try{
+     const {stdout:db}=await exec("antiword",["-x","db",file],{timeout:30000,maxBuffer:15000000});
+     const rows=[...db.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/gi)];
+     const tables=[...db.matchAll(/<(?:informaltable|table)\b/gi)];
+     const firstRows=rows.slice(0,14).map((r,i)=>({row:i,cells:[...r[1].matchAll(/<entry\b[^>]*>([\s\S]*?)<\/entry>/gi)]
+        .map(m=>m[1].replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim())
+        .map(cell=>({length:cell.length,refs:[...cell.matchAll(/\b(?:FW?\d{2}[AB]\/\d{4}E?|LRD\d{4}\/S3E?)\b/gi)].slice(0,3).map(x=>x[0]),
+        dates:[...cell.matchAll(/\b\d{2}\/\d{2}\/20\d{2}\b/g)].slice(0,4).map(x=>x[0]),
+        status:[...cell.matchAll(/ADDITIONAL INFORMATION RECEIVED|DECISION MADE|INVALID|PERMISSION|RETENTION|APPLICATIONS RECEIVED/gi)].slice(0,5).map(x=>x[0]),
+        sample:safe(cell).slice(0,140)}))}));
+     fingalDocbookStats={bytes:db.length,tables:tables.length,rows:rows.length,entries:(db.match(/<entry\b/gi)||[]).length,preview:firstRows,
+       tagSequence:[...db.matchAll(/<(informaltable|table|tgroup|tbody|row|entry)\b/gi)].slice(0,35).map(x=>x[1])};
+   }catch(e){fingalDocbookStats={error:String(e.message||e).slice(0,180)};}
+   return stdout;
   }
   if(bytes.subarray(0,2).toString()!=="PK")throw Error("Source is not DOCX");
   const {stdout}=await exec("unzip",["-p",file,"word/document.xml"],{timeout:30000,maxBuffer:15000000});
@@ -82,7 +97,32 @@ for(const probe of probes){
   const at=text.indexOf(ref);
   return {ref,maskedContext:safe(text.slice(Math.max(0,at-90),at+220)).replace(/\s+/g," ").slice(0,250)};
  });
- report.push({council:probe.council,source:probe.url,bytesOfExtractedText:text.length,uniqueReferences:refs.length,
+ const structure=probe.council==="FINGAL"?(()=>{
+  const lines=text.replace(/\r/g,"").split("\n");
+  const reference=/(?<![A-Za-z0-9])(?:FW?\d{2}[AB]\/\d{4}E?|LRD\d{4}\/S3E?)(?![A-Za-z0-9])/gi;
+  const keyword=/ADDITIONAL\s+INFORMATION\s+RECEIVED|FURTHER\s+INFORMATION|REGISTRATION|NEW\s+APPLICATION|APPLICATIONS?\s+RECEIVED|DECISION|INVALID|WITHDRAWN|PERMISSION|RETENTION|OUTLINE|APPROVAL|APPLICANT|LOCATION|PROPOSAL|PLANNING|ADDRESS/gi;
+  const date=/\b\d{2}\/\d{2}\/20\d{2}\b/g;
+  const markers=[];
+  for(let i=0;i<lines.length;i++){
+    const refs=[...lines[i].matchAll(reference)].map(x=>x[0].toUpperCase());
+    if(refs.length===1)markers.push({index:i,ref:refs[0]});
+  }
+  const recent=markers.filter(x=>/^(?:FW?26[AB]\/0(?:8|9)\d{2}E?|LRD0\d{3}\/S3E?)$/i.test(x.ref)).slice(0,6);
+  const old=markers.slice(0,4);
+  const chosen=[...old,...recent].filter((x,i,all)=>all.findIndex(y=>x.index===y.index)===i).slice(0,10);
+  const masked=(line,i)=>{
+   const cleaned=safe(line).replace(/\s+/g," ").slice(0,140);
+   const dates=[...line.matchAll(date)].map(x=>x[0]);
+   const keys=[...line.matchAll(keyword)].map(x=>x[0].toUpperCase()).slice(0,12);
+   const refs=[...line.matchAll(reference)].map(x=>x[0].toUpperCase());
+   return {row:i,chars:line.length,dates,refs,keys,masked:cleaned};
+  };
+  return {lines:lines.length,referenceMarkers:markers.length,windows:chosen.map(x=>({
+    ref:x.ref,at:x.index,window:lines.slice(Math.max(0,x.index-4),Math.min(lines.length,x.index+9))
+       .map((line,k)=>masked(line,Math.max(0,x.index-4)+k))
+  }))};
+ })():null;
+ report.push({council:probe.council,source:probe.url,structure,docbook:probe.council==="FINGAL"?fingalDocbookStats:null,bytesOfExtractedText:text.length,uniqueReferences:refs.length,
   sampleReferences:refs.slice(0,10),maskedHeader:safe(text.slice(0,650)).replace(/\s+/g," ").slice(0,500),
   contexts});
 }
