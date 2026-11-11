@@ -119,3 +119,17 @@ export function planWexfordDecisionUpdate(existing, incoming) {
     }
   };
 }
+
+
+/** Read the dated official weekly decision filename; never guess from the request date. */
+export function wexfordWeekEndingFromUrl(raw) {
+  const url = new URL(raw);
+  if (url.protocol !== 'https:' || url.hostname !== 'www.wexfordcoco.ie') return null;
+  const name = decodeURIComponent(url.pathname);
+  const m = name.match(/\bw\.e\.?\s*(\d{1,2})\.(\d{1,2})\.(20\d{2})(?=\D|$)/i);
+  if (!m) return null;
+  const day = Number(m[1]), month = Number(m[2]), year = Number(m[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCDate() !== day || date.getUTCMonth() !== month - 1 || date.getUTCFullYear() !== year) return null;
+  return date.toISOString().slice(0, 10);
+}
