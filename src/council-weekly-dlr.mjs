@@ -52,13 +52,21 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
  // true mismatch in application rows.
  const fragments=section.split(/\bReg\.\s*Ref\.\s*:\s*/i).slice(1);
  const validHeader=/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s|$)/i;
- const pieces=[];
- for(const fragment of fragments){
-   if(validHeader.test(fragment.trim()))pieces.push(fragment);
-   else if(pieces.length)pieces[pieces.length-1]+="\nReg. Ref.: "+fragment;
-   // A repeated column label can appear ahead of the first actual record.
-   // Ignore that fragment only; the exact official application count below
-   // still prevents silently losing a genuine registration.
+ let pieces=fragments;
+ // If the official count already matches, retain unsupported/legacy-style
+ // registration headers as separately counted rows; the strict per-row parser
+ // will exclude them, rather than merging them into another application.
+ if(fragments.length!==total){
+   // Only allow excess split markers when every official registration begins
+   // with an exact DLR reference, and all extra fragments lack that header.
+   // Preserve the intervening text on the owning application record.
+   pieces=[];
+   for(const fragment of fragments){
+     if(validHeader.test(fragment.trim()))pieces.push(fragment);
+     else if(pieces.length)pieces[pieces.length-1]+="\nReg. Ref.: "+fragment;
+   }
+   if(fragments.length<total||fragments.length>total+3)
+     throw Error("DLR excessive PDF register fragments "+fragments.length+" != official "+total);
  }
  if(pieces.length!==total)throw Error("DLR actual register count "+pieces.length+" != official "+total+" (raw fragments "+fragments.length+")");
  let excluded=0;const applications=[],seen=new Map();
