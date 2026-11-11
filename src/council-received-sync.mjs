@@ -8,7 +8,7 @@ import {join} from "node:path";
 import {execFile as cb} from "node:child_process";
 import {promisify} from "node:util";
 import {CUTOFF,parseWexfordReceived,parseSouthDublinReceived,
- fingalReceivedCandidates,dublinCityReceivedCandidates,receivedDate} from "./council-received-parser.mjs";
+ fingalReceivedCandidates,dublinCityReceivedCandidates,parseDublinCityReceived,receivedDate} from "./council-received-parser.mjs";
 import {dublinDocLinks,dublinDocxXmlText,DUBLIN_CITY_INDEX} from "./council-weekly-dublincity.mjs";
 import {FINGAL_INDEX} from "./council-weekly-fingal.mjs";
 const exec=promisify(cb),{Client}=pg;
@@ -117,7 +117,7 @@ async function parseDocument(doc){
    WEXFORD:()=>parseWexfordReceived(text,doc.url),
    SOUTHDUBLIN:()=>parseSouthDublinReceived(text,doc.url),
    FINGAL:()=>fingalReceivedCandidates(text),
-   DUBLINCITY:()=>dublinCityReceivedCandidates(text)
+   DUBLINCITY:()=>parseDublinCityReceived(text,doc.url,doc.week_ending)
   }[doc.authority]();
   if(parsed.headers<1||parsed.headers>1000)throw Error("Unrecognised or oversized list");
   // Never allow metadata-incomplete Word candidates into automatic publication.
@@ -145,7 +145,11 @@ await db.connect();
 let seeded=0,completed=0,failed=0;const report=[];
 try{
  for(const doc of docs){
-  const key=doc.authority+":"+createHash("sha256").update(doc.url).digest("hex").slice(0,24);
+  // A versioned key stages verified full DOCX records even where the
+  // candidate-only v1 document has already been acknowledged.
+  const family=doc.authority==="DUBLINCITY"?"DUBLINCITY_V2":doc.authority;
+  if(doc.authority==="DUBLINCITY" && doc.week_ending<"2026-10-11")continue;
+  const key=family+":"+createHash("sha256").update(doc.url).digest("hex").slice(0,24);
   const q=await db.query("insert into work_items(job_type,work_key,input,status,available_at,updated_at) values($1,$2,$3::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do nothing returning id",
    [JOB,key,JSON.stringify(doc)]);
   seeded+=q.rowCount;
@@ -156,7 +160,8 @@ try{
    const {sha256,parsed}=await parseDocument(item.input);
    const result={ok:true,authority:item.input.authority,url:item.input.url,week_ending:item.input.week_ending,
     sha256,applications:parsed.applications,candidate_references:parsed.candidate_references||[],
-    headers:parsed.headers,skipped:parsed.skipped,parser_version:1,checked_at:new Date().toISOString()};
+    headers:parsed.headers,skipped:parsed.skipped,
+    parser_version:item.input.authority==="DUBLINCITY"?2:1,checked_at:new Date().toISOString()};
    // Candidate-only documents are acknowledged in the worker: no production
    // application can be safely created from bare, possibly cited references.
    const candidateOnly=parsed.applications.length===0;

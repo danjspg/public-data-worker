@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {receivedDate,parseWexfordReceived,parseSouthDublinReceived,cleanSouthDublinField,fingalReceivedCandidates,dublinCityReceivedCandidates} from "../src/council-received-parser.mjs";
+import {receivedDate,parseWexfordReceived,parseSouthDublinReceived,cleanSouthDublinField,parseDublinCityReceived,fingalReceivedCandidates,dublinCityReceivedCandidates} from "../src/council-received-parser.mjs";
 test("reject impossible calendar dates",()=>{assert.equal(receivedDate("05/10/2026"),"2026-10-05");assert.equal(receivedDate("9 Oct 2026"),"2026-10-09");assert.equal(receivedDate("31/02/2026"),null);});
 test("Wexford valid original applications only, not cited older references",()=>{
  const sample="Valid Applications Received from 05 Oct 2026 To 11 Oct 2026\n"+
@@ -36,4 +36,44 @@ test("South Dublin page headers are stripped without losing planning proposal co
  const result=parseSouthDublinReceived(sample,"https://planning.southdublin.ie/Home/ViewWeeklyListDocument/4050");
  assert.equal(result.applications.length,1);
  assert.equal(result.applications[0].proposal,"Construction of a new warehouse and associated roadway in Dublin.");
+});
+
+test("Dublin City DOCX received parser requires same-week registration and exact header metadata",()=>{
+ const url="https://www.dublincity.ie/sites/default/files/2026-11/a1-wpl-44-26.docx";
+ const input="WEEK 44 APPLICATIONS RECEIVED\n"+
+ "WEB3621/26Application TYPE PermissionApplicant Name Sample Property HoldingsLocation 13 South Dock Road, Dublin 4, D04 N7KS"+
+ "Registration DATE 27/10/2026Additional INFORMATION PROPOSAL: Construction of a substantial new warehouse with associated vehicular access.\n"+
+ "__________________________________________________________________________\n"+
+ "WEB2700/26Application TYPE Retention PermissionApplicant Name Example CoLocation 9 Quayside Street, Dublin 2"+
+ "Registration DATE 17/09/2026Additional INFORMATION PROPOSAL: Old case sends new additional information about a warehouse.\n"+
+ "__________________________________________________________________________\n"+
+ "WEB3622/26Application TYPE Retention PermissionApplicant Name A CorpLocation 12 Example Park, Dublin 4"+
+ "Registration DATE 28/10/2026Additional INFORMATION PROPOSAL: Retention of alterations to a protected structure with associated works.\n"+
+ "__________________________________________________________________________\n"+
+ "The applicant also cites 1921/26 but there is no Application TYPE header.";
+ const r=parseDublinCityReceived(input,url,"2026-11-01");
+ assert.deepEqual(r.applications.map(x=>x.reference),["WEB3621/26","WEB3622/26"]);
+ assert.equal(r.headers,3);
+ assert.equal(r.applications[0].registration_date,"2026-10-27");
+ assert.equal(r.applications[1].application_type,"Retention");
+ assert.equal(r.applications[0].source_url,url);
+ assert.equal(r.applications[0].proposal,"Construction of a substantial new warehouse with associated vehicular access.");
+});
+test("Dublin City received parser never fabricates missing location or proposal",()=>{
+ const url="https://www.dublincity.ie/test.docx";
+ const input="WEB4000/26Application TYPE Permission 30 Main Street, Dublin 2 Registration DATE 26/10/2026 Additional Information no proposal\n"+
+ "WEB4001/26Application TYPE Permission Registration DATE 26/10/2026 PROPOSAL: Construction of a sizeable residential development with access.\n"+
+ "WEB4002/26Application TYPE PermissionApplicant Name PersonLocation 9 Quay Street, Dublin 1 Registration DATE 26/10/2026 PROPOSAL: Works to a large residence with new entrances and landscaping.";
+ const r=parseDublinCityReceived(input,url,"2026-11-01");
+ assert.deepEqual(r.applications.map(x=>x.reference),["WEB4002/26"]);
+});
+
+test("Dublin City DOCX decisions do not create spurious new applications",()=>{
+ const url="https://www.dublincity.ie/sites/default/files/2026-11/a1-wpl-44-26.docx";
+ const input="WEB5000/26Application TYPE PermissionDecision MadeLocation 13 Quay Street, Dublin 1 Registration DATE 28/10/2026 PROPOSAL: Extensive development of a new building with access.\n"+
+ "WEB5001/26Application TYPE PermissionApplicant Name Builder LtdLocation 14 Quay Street, Dublin 1 Registration DATE 28/10/2026 PROPOSAL: Construction of a large dwelling with ancillary vehicular access.";
+ const r=parseDublinCityReceived(input,url,"2026-11-01");
+ assert.deepEqual(r.applications.map(x=>x.reference),["WEB5001/26"]);
+ assert.equal(r.applications[0].location,"14 Quay Street, Dublin 1");
+ assert.equal(Object.hasOwn(r.applications[0],"applicant_name"),false);
 });
