@@ -56,7 +56,9 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
  for(const fragment of fragments){
    if(validHeader.test(fragment.trim()))pieces.push(fragment);
    else if(pieces.length)pieces[pieces.length-1]+="\nReg. Ref.: "+fragment;
-   else throw Error("Unexpected DLR register text before first application");
+   // A repeated column label can appear ahead of the first actual record.
+   // Ignore that fragment only; the exact official application count below
+   // still prevents silently losing a genuine registration.
  }
  if(pieces.length!==total)throw Error("DLR actual register count "+pieces.length+" != official "+total+" (raw fragments "+fragments.length+")");
  let excluded=0;const applications=[],seen=new Map();
