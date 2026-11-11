@@ -86,7 +86,15 @@ for(const probe of probes){
    const rx=/(?<![A-Za-z0-9])((?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26)\s*APPLICATION\s*TYPE\b/gi;
    const starts=[...text.matchAll(rx)];
    const fields=/APPLICATION\s*TYPE|REGISTRATION\s*DATE|ADDITIONAL\s*INFORMATION|PROPOSAL\s*:|LOCATION\s*:|ADDRESS\s*:|DECISION|APPEAL|DATE\s*:/gi;
-   return {recordHeaders:starts.length,examples:starts.slice(0,7).map((m,i)=>{
+   const types=new Map();
+   for(const m of starts){
+     const between=text.slice(m.index+m[0].length,m.index+m[0].length+85).trim();
+     const token=(between.match(/^[^\s]{1,28}/)?.[0]||"(empty)").replace(/[^A-Za-z()\/-]/g,"").slice(0,24);
+     types.set(token,(types.get(token)||0)+1);
+   }
+   return {recordHeaders:starts.length,
+     firstTypeTokenCounts:[...types.entries()].sort((a,b)=>b[1]-a[1]).slice(0,18),
+     examples:starts.slice(0,7).map((m,i)=>{
      const fragment=text.slice(m.index,Math.min(m.index+1100,starts[i+1]?.index??text.length));
      return {reference:m[1].toUpperCase(),fieldSequence:[...fragment.matchAll(fields)].slice(0,15).map(x=>x[0].replace(/\s+/g," ").toUpperCase()),
        maskedStart:safe(fragment.slice(0,550)).replace(/\s+/g," ").slice(0,550),
