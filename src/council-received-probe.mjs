@@ -82,32 +82,8 @@ for(const probe of probes){
   const at=text.indexOf(ref);
   return {ref,maskedContext:safe(text.slice(Math.max(0,at-90),at+220)).replace(/\s+/g," ").slice(0,250)};
  });
- const structure=probe.council==="DUBLINCITY"?(()=>{
-   const rx=/(?<![A-Za-z0-9])((?:WEBDSDZ|WEB|DSDZ|LRD)?\d{3,5}\/26)\s*APPLICATION\s*TYPE\b/gi;
-   const starts=[...text.matchAll(rx)];
-   const fields=/APPLICATION\s*TYPE|REGISTRATION\s*DATE|ADDITIONAL\s*INFORMATION|PROPOSAL\s*:|LOCATION\s*:|ADDRESS\s*:|DECISION|APPEAL|DATE\s*:/gi;
-   const types=new Map();
-   for(const m of starts){
-     const between=text.slice(m.index+m[0].length,m.index+m[0].length+85).trim();
-     const token=(between.match(/^[^\s]{1,28}/)?.[0]||"(empty)").replace(/[^A-Za-z()\/-]/g,"").slice(0,24);
-     types.set(token,(types.get(token)||0)+1);
-   }
-   return {recordHeaders:starts.length,
-     firstTypeTokenCounts:[...types.entries()].sort((a,b)=>b[1]-a[1]).slice(0,18),
-     examples:starts.slice(0,7).map((m,i)=>{
-     const fragment=text.slice(m.index,Math.min(m.index+1100,starts[i+1]?.index??text.length));
-     const registration=/REGISTRATION\s*DATE/i.exec(fragment);
-     const beforeDate=registration?fragment.slice(0,registration.index):fragment.slice(0,300);
-     const metadataLabels=[...beforeDate.matchAll(/(?:APPLICANT\s*(?:NAME)?|SITE\s*(?:ADDRESS|LOCATION)|LOCATION|ADDRESS|DECISION\s*(?:DATE)?|PERMISSION|RETENTION)/gi)]
-       .slice(0,15).map(x=>({label:x[0].replace(/\s+/g," ").toUpperCase(),at:x.index}));
-     return {reference:m[1].toUpperCase(),metadataLabels,fieldSequence:[...fragment.matchAll(fields)].slice(0,15).map(x=>x[0].replace(/\s+/g," ").toUpperCase()),
-       maskedStart:safe(fragment.slice(0,550)).replace(/\s+/g," ").slice(0,550),
-       hasDate:/REGISTRATION\s*DATE\s*\d{2}\/\d{2}\/2026/i.test(fragment),
-       length:fragment.length};
-   })};
- })():null;
  report.push({council:probe.council,source:probe.url,bytesOfExtractedText:text.length,uniqueReferences:refs.length,
   sampleReferences:refs.slice(0,10),maskedHeader:safe(text.slice(0,650)).replace(/\s+/g," ").slice(0,500),
-  contexts,structure});
+  contexts});
 }
 console.log(JSON.stringify({readOnly:true,wexfordDocLinks:wex.length,southDublinOnFirstPage:south.length,report},null,2));
