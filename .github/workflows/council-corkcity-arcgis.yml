@@ -1,0 +1,44 @@
+name: "[PUBLIC] Cork City official ArcGIS registrations"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-corkcity-arcgis.yml"
+      - "src/council-corkcity-arcgis*.mjs"
+      - "tests/council-corkcity-arcgis.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-corkcity-arcgis.yml"
+      - "src/council-corkcity-arcgis*.mjs"
+      - "tests/council-corkcity-arcgis.test.mjs"
+  workflow_dispatch:
+  schedule:
+    - cron: "45 6 * * *"
+permissions:
+  contents: read
+concurrency:
+  group: corkcity-official-arcgis-source
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Test source validation and parsing
+        run: |
+          node --check src/council-corkcity-arcgis.mjs
+          node --check src/council-corkcity-arcgis-sync.mjs
+          node --test tests/council-corkcity-arcgis.test.mjs
+      - name: Verify live Cork City official ArcGIS source (no writes)
+        if: github.event_name == 'pull_request'
+        run: node src/council-corkcity-arcgis-sync.mjs --dry-run
+      - name: Stage deduplicated official source in Neon
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: node src/council-corkcity-arcgis-sync.mjs
