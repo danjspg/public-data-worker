@@ -96,7 +96,11 @@ for(const probe of probes){
      firstTypeTokenCounts:[...types.entries()].sort((a,b)=>b[1]-a[1]).slice(0,18),
      examples:starts.slice(0,7).map((m,i)=>{
      const fragment=text.slice(m.index,Math.min(m.index+1100,starts[i+1]?.index??text.length));
-     return {reference:m[1].toUpperCase(),fieldSequence:[...fragment.matchAll(fields)].slice(0,15).map(x=>x[0].replace(/\s+/g," ").toUpperCase()),
+     const registration=/REGISTRATION\s*DATE/i.exec(fragment);
+     const beforeDate=registration?fragment.slice(0,registration.index):fragment.slice(0,300);
+     const metadataLabels=[...beforeDate.matchAll(/(?:APPLICANT\s*(?:NAME)?|SITE\s*(?:ADDRESS|LOCATION)|LOCATION|ADDRESS|DECISION\s*(?:DATE)?|PERMISSION|RETENTION)/gi)]
+       .slice(0,15).map(x=>({label:x[0].replace(/\s+/g," ").toUpperCase(),at:x.index}));
+     return {reference:m[1].toUpperCase(),metadataLabels,fieldSequence:[...fragment.matchAll(fields)].slice(0,15).map(x=>x[0].replace(/\s+/g," ").toUpperCase()),
        maskedStart:safe(fragment.slice(0,550)).replace(/\s+/g," ").slice(0,550),
        hasDate:/REGISTRATION\s*DATE\s*\d{2}\/\d{2}\/2026/i.test(fragment),
        length:fragment.length};
