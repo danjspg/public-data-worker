@@ -12,7 +12,7 @@ on:
       - "src/council-received-*.mjs"
   workflow_dispatch:
   schedule:
-    - cron: "35 6 * * 1,4"
+    - cron: "35 6 * * *"
 permissions:
   contents: read
 concurrency:
@@ -49,6 +49,7 @@ jobs:
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
           COUNCIL_RECEIVED_DOCUMENT_LIMIT: "12"
-        # One bounded batch per invocation, including push-triggered verification.
-        # Avoid re-running the former six-batch initial catch-up on every code change.
+        # One bounded batch (max 12 documents) per daily run or deployment.
+        # Already-staged immutable source jobs are not redownloaded.
+        # Never bypass an HTTP 403/429 or re-run large historic batches.
         run: node src/council-received-sync.mjs
