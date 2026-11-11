@@ -33,15 +33,20 @@ async function extract(url){
 }
 const docs=dublinDocLinks(await fetchCouncil(DUBLIN_CITY_INDEX));
 if(DRY){
- const preview=[];
+ const preview=[],failures=[];
  for(const item of docs.slice(0,5)){
-  const x=await extract(item.url);
-  preview.push({area:item.area,week:item.week,rows:x.markers,explicitDecisions:x.decisions.length,excluded:x.excluded,refusals:x.decisions.filter(v=>v.decision_text==="Refused").length,
-   sample:x.decisions.slice(0,6)});
+  try {
+   const x=await extract(item.url);
+   preview.push({area:item.area,week:item.week,rows:x.markers,explicitDecisions:x.decisions.length,excluded:x.excluded,refusals:x.decisions.filter(v=>v.decision_text==="Refused").length,
+    sample:x.decisions.slice(0,6)});
+  } catch (error) {
+   failures.push({area:item.area,week:item.week,error:String(error.message||error).slice(0,180)});
+  }
  }
- console.log(JSON.stringify({dryRun:true,documents:docs.length,preview},null,2));
- process.exit(0);
-}
+ console.log(JSON.stringify({dryRun:true,documents:docs.length,preview,failures},null,2));
+ if(failures.length)console.warn("DUBLIN_CITY_SOURCE_PARTIAL_FAILURE",JSON.stringify(failures));
+ if(!preview.length)process.exitCode=1;
+} else {
 if(!process.env.WORKER_DATABASE_URL)throw Error("Missing worker DB connection");
 const db=new Client({connectionString:process.env.WORKER_DATABASE_URL,ssl:{rejectUnauthorized:false}});
 await db.connect();
@@ -75,3 +80,5 @@ try{
  console.log(JSON.stringify({discovered:docs.length,seeded,completed,failed,reports},null,2));
  if(failed&&!completed)process.exitCode=1;
 }finally{await db.end();}
+
+}
