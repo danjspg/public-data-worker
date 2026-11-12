@@ -96,7 +96,7 @@ for(const [label,params] of [
  const d=await fetchJson(u);
  if(label==="count")report.liveCoverage.count=d.count;
  else {
-  const seen=new Map(),stat=new Map(),types={dateMiss:0,locationMiss:0,descriptionMiss:0,refMiss:0,refDuplicate:0,conflict:0},fresh=[];
+  const seen=new Map(),stat=new Map(),types={dateMiss:0,locationMiss:0,descriptionMiss:0,refMiss:0,refDuplicate:0,conflict:0},fresh=[],unusual=[];
   for(const f of d.features||[]){
    const a=f.attributes||{};
    const date=typeof a.REGISTRATION_DATE==="number"?new Date(a.REGISTRATION_DATE).toISOString().slice(0,10):null;
@@ -106,7 +106,7 @@ for(const [label,params] of [
    if(!date)types.dateMiss++;
    if(String(a.LOCATION||"").trim().length<7)types.locationMiss++;
    if(String(a.DESCRIPTION||"").trim().length<24)types.descriptionMiss++;
-   if(!/^(?:FW?|LRD)\d{2}[AB]\/\d{4}E?$/i.test(ref))types.refMiss++;
+   if(!/^(?:FW?|LRD)\d{2}[AB]\/\d{4}E?$/i.test(ref)){types.refMiss++;if(unusual.length<15)unusual.push({ref,date})}
    if(seen.has(ref)){
     types.refDuplicate++;
     const prior=seen.get(ref);
@@ -115,7 +115,7 @@ for(const [label,params] of [
    if(fresh.length<5)fresh.push({ref,date,status,decision:a.DECISION_DATE?new Date(a.DECISION_DATE).toISOString().slice(0,10):null});
   }
   report.liveCoverage={...report.liveCoverage,received:(d.features||[]).length,exceeded:d.exceededTransferLimit===true,
-    distinct:seen.size,latest:fresh[0]?.date||null,highest:fresh,checks:types,statuses:[...stat].sort((a,b)=>b[1]-a[1]).slice(0,15)};
+    distinct:seen.size,latest:fresh[0]?.date||null,highest:fresh,checks:types,unusualReferences:unusual,statuses:[...stat].sort((a,b)=>b[1]-a[1]).slice(0,15)};
  }
  }catch(e){report.liveCoverage[label]={error:String(e.message||e)}}
 }
