@@ -1,0 +1,44 @@
+name: "[PUBLIC] Fingal official ArcGIS registrations"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/council-fingal-arcgis.yml"
+      - "src/council-fingal-arcgis*.mjs"
+      - "tests/council-fingal-arcgis.test.mjs"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/council-fingal-arcgis.yml"
+      - "src/council-fingal-arcgis*.mjs"
+      - "tests/council-fingal-arcgis.test.mjs"
+  workflow_dispatch:
+  schedule:
+    - cron: "55 6 * * *"
+permissions:
+  contents: read
+concurrency:
+  group: fingal-official-arcgis-source
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Validate official source and registration parser
+        run: |
+          node --check src/council-fingal-arcgis.mjs
+          node --check src/council-fingal-arcgis-sync.mjs
+          node --test tests/council-fingal-arcgis.test.mjs
+      - name: Audit live Fingal council registrations without writes
+        if: github.event_name == 'pull_request'
+        run: node src/council-fingal-arcgis-sync.mjs --dry-run
+      - name: Stage Fingal source data in Neon
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+        run: node src/council-fingal-arcgis-sync.mjs
