@@ -7,7 +7,12 @@ const layerServices=[
  "Planning_Applications_New_FCC/FeatureServer/0",
  "Planning_Applications_All/FeatureServer/0",
  "Planning_Applications_AGOL_WEB/FeatureServer/0",
- "Fingal_Planning_Applications/FeatureServer/0"
+ "Fingal_Planning_Applications/FeatureServer/0",
+ "PlanningApplicationsFingal/FeatureServer/0",
+ "Planning_Applications_Pending/FeatureServer/0",
+ "Planning_Applications_Decided_Archived/FeatureServer/0",
+ "Planning_Applications_Not_Assigned/FeatureServer/0",
+ "Planning_Applications_On_Appeal/FeatureServer/0"
 ];
 const ITEM="fce64680d727452388c3e6b6037866a6";
 let calls=0;
@@ -41,7 +46,7 @@ report.directory={
 };
 const dynamicallyFound=(directory.services||[]).filter(x=>/plan.*app|app.*plan|apas/i.test(x.name||""))
  .slice(0,3).map(x=>x.name+"/"+x.type+"/0");
-for(const path of [...new Set([...layerServices,...dynamicallyFound])].slice(0,7)){
+for(const path of [...new Set([...layerServices,...dynamicallyFound])].slice(0,12)){
  const url=BASE+path,entry={service:path};
  try{
   const meta=await fetchJson(url+"?f=json");
@@ -64,6 +69,13 @@ for(const path of [...new Set([...layerServices,...dynamicallyFound])].slice(0,7
        new Date(x.attributes[field.name]).toISOString().slice(0,10):
        String(x.attributes?.[field.name]||"").slice(0,32)
    }));
+  }else if(refFields.length){
+   const ref=refFields[0];
+   const q=new URL(url+"/query");
+   for(const [k,v] of Object.entries({f:"json",where:"1=1",outFields:ref.name,
+     returnGeometry:"false",orderByFields:"OBJECTID DESC",resultRecordCount:"3"}))q.searchParams.set(k,v);
+   try{const data=await fetchJson(q);entry.samples=(data.features||[]).map(x=>({ref:String(x.attributes?.[ref.name]||"").slice(0,32)}));}
+   catch(e){entry.queryError=String(e.message||e)}
   }else if((meta.fields||[]).length<=4){
    entry.onlyGeometryFields=true;
   }
