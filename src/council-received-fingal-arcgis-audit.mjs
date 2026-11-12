@@ -82,5 +82,42 @@ for(const path of [...new Set([...layerServices,...dynamicallyFound])].slice(0,1
  }catch(e){entry.error=String(e.message||e).slice(0,220)}
  report.layers.push(entry);
 }
+const LIVE=BASE+"PlanningApplicationsFingal/FeatureServer/0";
+report.liveCoverage={};
+for(const [label,params] of [
+ ["count",{where:"REGISTRATION_DATE >= TIMESTAMP '2026-08-01 00:00:00'",returnCountOnly:"true"}],
+ ["sample",{where:"REGISTRATION_DATE >= TIMESTAMP '2026-08-01 00:00:00'",
+ outFields:"PLANNING_REFERENCE,REGISTRATION_DATE,LOCATION,DESCRIPTION,CURRENT_STATUS,DECISION_DATE",
+ orderByFields:"REGISTRATION_DATE DESC",returnGeometry:"false",resultRecordCount:"900"}]
+]){
+ const u=new URL(LIVE+"/query");
+ for(const [k,v] of Object.entries({f:"json",...params}))u.searchParams.set(k,v);
+ try{
+ const d=await fetchJson(u);
+ if(label==="count")report.liveCoverage.count=d.count;
+ else {
+  const seen=new Map(),stat=new Map(),types={dateMiss:0,locationMiss:0,descriptionMiss:0,refMiss:0,refDuplicate:0,conflict:0},fresh=[];
+  for(const f of d.features||[]){
+   const a=f.attributes||{};
+   const date=typeof a.REGISTRATION_DATE==="number"?new Date(a.REGISTRATION_DATE).toISOString().slice(0,10):null;
+   const ref=String(a.PLANNING_REFERENCE||"");
+   const status=String(a.CURRENT_STATUS||"").slice(0,50);
+   stat.set(status,(stat.get(status)||0)+1);
+   if(!date)types.dateMiss++;
+   if(String(a.LOCATION||"").trim().length<7)types.locationMiss++;
+   if(String(a.DESCRIPTION||"").trim().length<24)types.descriptionMiss++;
+   if(!/^(?:FW?|LRD)\d{2}[AB]\/\d{4}E?$/i.test(ref))types.refMiss++;
+   if(seen.has(ref)){
+    types.refDuplicate++;
+    const prior=seen.get(ref);
+    if(prior.date!==date||prior.status!==status)types.conflict++;
+   }else seen.set(ref,{date,status});
+   if(fresh.length<5)fresh.push({ref,date,status,decision:a.DECISION_DATE?new Date(a.DECISION_DATE).toISOString().slice(0,10):null});
+  }
+  report.liveCoverage={...report.liveCoverage,received:(d.features||[]).length,exceeded:d.exceededTransferLimit===true,
+    distinct:seen.size,latest:fresh[0]?.date||null,highest:fresh,checks:types,statuses:[...stat].sort((a,b)=>b[1]-a[1]).slice(0,15)};
+ }
+ }catch(e){report.liveCoverage[label]={error:String(e.message||e)}}
+}
 report.calls=calls;
 console.log(JSON.stringify(report,null,2));
