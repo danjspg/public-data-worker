@@ -1,0 +1,19 @@
+name: "[PUBLIC] Cork County independent ArcGIS catalogue audit"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/corkcounty-arcgis-catalogue-audit.yml"
+      - "src/council-corkcounty-arcgis-catalogue-audit.mjs"
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check src/council-corkcounty-arcgis-catalogue-audit.mjs
+      - run: node src/council-corkcounty-arcgis-catalogue-audit.mjs
