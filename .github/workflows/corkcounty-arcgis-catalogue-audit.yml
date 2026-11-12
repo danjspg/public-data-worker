@@ -17,3 +17,5 @@ jobs:
           node-version: 22
       - run: node --check src/council-corkcounty-arcgis-catalogue-audit.mjs
       - run: node src/council-corkcounty-arcgis-catalogue-audit.mjs
+      - run: node --check src/council-corkcounty-arcgis-org-experiences.mjs
+      - run: node src/council-corkcounty-arcgis-org-experiences.mjs
