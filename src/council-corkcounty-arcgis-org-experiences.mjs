@@ -81,7 +81,7 @@ for(const viewer of viewers){
   entry.owner=item.owner;entry.type=item.type;entry.modified=date(item.modified);
   const data=await get(REST+"content/items/"+viewer.id+"/data?f=json",true);
   const nodes=collect(data);
-  entry=Object.assign(entry,nodes);
+  Object.assign(entry,nodes);
  }catch(e){entry.error=String(e.message||e).slice(0,170)}
  report.viewers.push(entry);
 }
