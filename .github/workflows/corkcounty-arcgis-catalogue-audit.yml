@@ -19,3 +19,5 @@ jobs:
       - run: node src/council-corkcounty-arcgis-catalogue-audit.mjs
       - run: node --check src/council-corkcounty-arcgis-org-experiences.mjs
       - run: node src/council-corkcounty-arcgis-org-experiences.mjs
+      - run: node --check src/council-corkcounty-mapalerts-live-map-audit.mjs
+      - run: node src/council-corkcounty-mapalerts-live-map-audit.mjs
