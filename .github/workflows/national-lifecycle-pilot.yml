@@ -1,0 +1,26 @@
+name: "[PUBLIC] National planning lifecycle pilot Wexford and Dublin City"
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/national-lifecycle-pilot.yml"
+      - "src/national-lifecycle-pilot.mjs"
+      - "tests/national-lifecycle-pilot.test.mjs"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: national-lifecycle-pilot
+  cancel-in-progress: false
+jobs:
+  read-only-pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify strict council matching and stop conditions
+        run: node --test tests/national-lifecycle-pilot.test.mjs
+      - name: Read four public national records only (no credentials or database access)
+        run: node src/national-lifecycle-pilot.mjs
