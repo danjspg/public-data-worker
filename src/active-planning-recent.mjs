@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { AGILE_AUTHORITIES, NATIONAL_SOURCE_NAMES, planningSourceForAuthority } from './planning-source-registry.mjs';
 import { fetchEplanApplication, fetchEplanReceivedReferences } from './eplan-source.mjs';
+import { nationalAdmissionLookbackDays } from './national-admission-window.mjs';
 
 const { Pool } = pg;
 const connectionString = process.env.WORKER_DATABASE_URL;
@@ -148,9 +149,18 @@ try{
   // Recent discovery is worker-owned. Production no longer needs to tell the worker
   // which authority/source to inspect; the public registry is the source of truth.
   const today=new Date().toISOString().slice(0,10);
-  const from=addDays(today,-(RECENT_DAYS-1));
   for(const authority of Object.keys(NATIONAL_SOURCE_NAMES)){
-    const input={local_authority_code:authority,from,to:today,queued_for_date:today,source_policy:'first-party-preferred',source_policy_version:SOURCE_POLICY_VERSION};
+    // On Mondays, only Agile-blocked authorities get a 90-day national
+    // admission replay. ePlan continues its daily direct-source cadence.
+    const lookbackDays=nationalAdmissionLookbackDays({
+      authorityCode:authority,agileAuthorities:AGILE_AUTHORITIES,
+      agileAccessBlocked:AGILE_ACCESS_BLOCKED,utcDayOfWeek:new Date().getUTCDay(),
+      regularDays:RECENT_DAYS,
+    });
+    const from=addDays(today,-(lookbackDays-1));
+    const input={local_authority_code:authority,from,to:today,queued_for_date:today,
+      source_policy:'first-party-preferred',source_policy_version:SOURCE_POLICY_VERSION,
+      national_late_admission_catchup:lookbackDays>RECENT_DAYS};
     const inserted=await pool.query(`
       insert into work_items(job_type,work_key,input,status,available_at,updated_at)
       values('active_planning_recent_range',$1,$2::jsonb,'pending',now(),now())
