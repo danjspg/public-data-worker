@@ -8,6 +8,8 @@ on:
     paths:
       - ".github/workflows/active-planning-recent.yml"
       - "src/active-planning-recent.mjs"
+      - "src/national-admission-window.mjs"
+      - "tests/national-admission-window.test.mjs"
       - "src/planning-source-registry.mjs"
       - "src/eplan-source.mjs"
       - "package.json"
@@ -30,6 +32,8 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
+      - name: Verify bounded national admission replay policy
+        run: node --test tests/national-admission-window.test.mjs
       - name: Check worker database
         env:
           WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
