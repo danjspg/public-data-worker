@@ -29,13 +29,13 @@ async function parse(doc){
   await writeFile(file,bytes);
   const {stdout}=await exec("pdftotext",["-raw",file,"-"],{timeout:30000,maxBuffer:24000000});
   const p=parseDlrReceived(stdout,doc.url);
-  if(p.applications.length<3&&p.headers>=10)throw Error("Unexpected low DLR received coverage");
+  if(p.applications.length<3&&p.headers-p.beforeCutoff>=10)throw Error("Unexpected low DLR received coverage");
   return {sha256,parsed:p};
  }finally{await rm(dir,{force:true,recursive:true});}
 }
 if(DRY){
  const reports=[];
- for(const d of docs.slice(0,3)){
+ for(const d of docs.slice(0,LIMIT)){
   const p=await parse(d);
   reports.push({week:d.week,official:p.parsed.officialTotal,applications:p.parsed.applications.length,excluded:p.parsed.skipped,
    refs:p.parsed.applications.slice(0,15).map(x=>({reference:x.reference,date:x.registration_date}))});
@@ -51,6 +51,12 @@ try{
  // host allowlist check, and exhausted their retries. Only the DLR-specific
  // worker may recover these exact, known-safe failures. Requeue once: a later
  // parser/network failure uses a different reason and will not loop here.
+ // Retry only known old-parser failures once with parser v2. A source/count
+ // mismatch under v2 still fails closed and cannot be automatically reset again.
+ const {rowCount:parserRecovered}=await db.query(
+  "update work_items set status='pending',attempts=0,last_error=null,available_at=now(),input=input||'{\"parser_recovery_version\":2}'::jsonb,updated_at=now() where job_type=$1 and input->>'authority'='DLR' and input->>'url' like 'https://www.dlrcoco.ie/sites/dlrcoco/files/%' and status in ('pending','failed') and coalesce(input->>'parser_recovery_version','')<>'2' and (last_error like 'DLR actual register count %' or last_error='Unexpected low DLR received coverage')",
+  [JOB,JSON.stringify({parser_recovery_version:2})]);
+ if(parserRecovered)console.log(JSON.stringify({dlrParserV2Recovered:parserRecovered}));
  const {rows:recovered}=await db.query(
   "update work_items set status='pending',attempts=0,last_error=null,available_at=now(),updated_at=now() where job_type=$1 and input->>'authority'='DLR' and status='failed' and last_error='Nonofficial council source rejected' and input->>'week_ending'>='2026-08-01' and input->>'url' like 'https://www.dlrcoco.ie/sites/dlrcoco/files/%' returning id",
   [JOB]);
@@ -68,7 +74,7 @@ try{
    const p=await parse(job.input);
    const result={ok:true,authority:"DLR",url:job.input.url,week_ending:job.input.week_ending,
     sha256:p.sha256,applications:p.parsed.applications,headers:p.parsed.headers,
-    skipped:p.parsed.skipped,parser_version:1,source:"dlrcoco_official_weekly_pdf",
+    skipped:p.parsed.skipped,addenda_count:p.parsed.addendumCount,parser_version:2,source:"dlrcoco_official_weekly_pdf",
     checked_at:new Date().toISOString()};
    await db.query("update work_items set status='completed',result=$2::jsonb,attempts=attempts+1,completed_at=now(),last_error=null,updated_at=now() where id=$1",
     [job.id,JSON.stringify(result)]);

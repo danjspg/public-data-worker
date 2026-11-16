@@ -5,7 +5,9 @@ export const DLR_RECOVERY_CUTOFF="2026-08-01";
 export const DLR_REF=/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?$/i;
 const clean=s=>String(s||"").replace(/\s+/g," ").trim();
 export function dlrDate(raw){
- const m=String(raw||"").match(/^(\d{2})\/(\d{2})\/(20\d{2})$/);
+ const months={jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"};
+ const value=String(raw||"").replace(/^(\d{2})-([A-Za-z]{3})-(20\d{2})$/,(_,d,m,y)=>d+"/"+(months[m.toLowerCase()]||"00")+"/"+y);
+ const m=value.match(/^(\d{2})\/(\d{2})\/(20\d{2})$/);
  if(!m)return null;
  const d=new Date(Date.UTC(+m[3],+m[2]-1,+m[1]));
  const iso=d.toISOString().slice(0,10);
@@ -51,7 +53,8 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
  // exact official number of registration entries. Never silently accept a
  // true mismatch in application rows.
  const fragments=section.split(/\bReg\.\s*Ref\.\s*:\s*/i).slice(1);
- const validHeader=/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s|$)/i;
+ // A cited real reference in proposal prose is not a new registration.
+ const validHeader=/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s+App Rec[’\']d Date\s*:)/i;
  let pieces=fragments;
  // If the official count already matches, retain unsupported/legacy-style
  // registration headers as separately counted rows; the strict per-row parser
@@ -68,8 +71,19 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
    if(fragments.length<total||fragments.length>total+3)
      throw Error("DLR excessive PDF register fragments "+fragments.length+" != official "+total);
  }
+ // The council may append an explicitly labelled RED III record dated after
+ // this register's week, without adding it to the printed official total.
+ // Quarantine only that independently identified addendum; never publish it
+ // under the wrong week or tolerate unexplained row-count differences.
+ const weekEnd=dlrDate(section.match(/DATED\s+\d{2}\/\d{2}\/20\d{2}\s+TO\s+(\d{2}\/\d{2}\/20\d{2})/i)?.[1]);
+ const addenda=pieces.filter(piece=>{
+  const received=dlrDate(field(piece,"App Rec’d Date",["Applicant Name","Location"]));
+  return weekEnd&&received&&received>weekEnd&&/Renewable Energy Directive|RED\s*III/i.test(piece);
+ });
+ if(pieces.length>total&&pieces.length-addenda.length===total)
+  pieces=pieces.filter(piece=>!addenda.includes(piece));
  if(pieces.length!==total)throw Error("DLR actual register count "+pieces.length+" != official "+total+" (raw fragments "+fragments.length+")");
- let excluded=0;const applications=[],seen=new Map();
+ let excluded=0,beforeCutoff=0;const applications=[],seen=new Map();
  for(const piece of pieces){
   const ref=piece.match(/^\s*([A-Z]{1,4}\d{2}[A-Z]\/\d{4}(?:\/WEB)?)/i)?.[1]?.toUpperCase();
   const date=dlrDate(field(piece,"App Rec’d Date",["Applicant Name","Location"]));
@@ -78,6 +92,8 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
   const application_type=field(piece,"Application Type",["Further Information","Clarification FI Recd","Link"]);
   const further=field(piece,"Further Information",["Clarification FI Recd","Link"]);
   const clarification=field(piece,"Clarification FI Recd",["Link"]);
+  if(weekEnd&&date&&date>weekEnd){excluded++;continue;}
+  if(date&&date<cutoff){excluded++;beforeCutoff++;continue;}
   // Current weekly list also includes old cases submitting FI. They have an old
   // initial received date and an explicit "Further Information" entry.
   if(!ref||!DLR_REF.test(ref)||!date||date<cutoff||
@@ -93,5 +109,5 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
   if(old&&(old.registration_date!==date||old.proposal!==proposal))throw Error("Conflicting DLR row "+ref);
   if(!old){seen.set(ref,row);applications.push(row);}
  }
- return {applications,headers:pieces.length,skipped:excluded,officialTotal:total};
+ return {applications,headers:pieces.length,skipped:excluded,beforeCutoff,addendumCount:addenda.length,officialTotal:total};
 }
