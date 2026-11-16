@@ -51,7 +51,8 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
  // exact official number of registration entries. Never silently accept a
  // true mismatch in application rows.
  const fragments=section.split(/\bReg\.\s*Ref\.\s*:\s*/i).slice(1);
- const validHeader=/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s|$)/i;
+ // A cited real reference in proposal prose is not a new registration.
+ const validHeader=/^(?:D|DZ|LRD)\d{2}[A-Z]\/\d{4}(?:\/WEB)?(?=\s+App Rec[’\']d Date\s*:)/i;
  let pieces=fragments;
  // If the official count already matches, retain unsupported/legacy-style
  // registration headers as separately counted rows; the strict per-row parser
@@ -69,7 +70,7 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
      throw Error("DLR excessive PDF register fragments "+fragments.length+" != official "+total);
  }
  if(pieces.length!==total)throw Error("DLR actual register count "+pieces.length+" != official "+total+" (raw fragments "+fragments.length+")");
- let excluded=0;const applications=[],seen=new Map();
+ let excluded=0,beforeCutoff=0;const applications=[],seen=new Map();
  for(const piece of pieces){
   const ref=piece.match(/^\s*([A-Z]{1,4}\d{2}[A-Z]\/\d{4}(?:\/WEB)?)/i)?.[1]?.toUpperCase();
   const date=dlrDate(field(piece,"App Rec’d Date",["Applicant Name","Location"]));
@@ -78,6 +79,7 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
   const application_type=field(piece,"Application Type",["Further Information","Clarification FI Recd","Link"]);
   const further=field(piece,"Further Information",["Clarification FI Recd","Link"]);
   const clarification=field(piece,"Clarification FI Recd",["Link"]);
+  if(date&&date<cutoff){excluded++;beforeCutoff++;continue;}
   // Current weekly list also includes old cases submitting FI. They have an old
   // initial received date and an explicit "Further Information" entry.
   if(!ref||!DLR_REF.test(ref)||!date||date<cutoff||
@@ -93,5 +95,5 @@ export function parseDlrReceived(text,url,cutoff=DLR_RECOVERY_CUTOFF){
   if(old&&(old.registration_date!==date||old.proposal!==proposal))throw Error("Conflicting DLR row "+ref);
   if(!old){seen.set(ref,row);applications.push(row);}
  }
- return {applications,headers:pieces.length,skipped:excluded,officialTotal:total};
+ return {applications,headers:pieces.length,skipped:excluded,beforeCutoff,officialTotal:total};
 }
