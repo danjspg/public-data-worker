@@ -54,7 +54,7 @@ try{
  // Retry only known old-parser failures once with parser v2. A source/count
  // mismatch under v2 still fails closed and cannot be automatically reset again.
  const {rowCount:parserRecovered}=await db.query(
-  "update work_items set status='pending',attempts=0,last_error=null,available_at=now(),input=input||'{\"parser_recovery_version\":2}'::jsonb,updated_at=now() where job_type=$1 and input->>'authority'='DLR' and input->>'url' like 'https://www.dlrcoco.ie/sites/dlrcoco/files/%' and status in ('pending','failed') and coalesce(input->>'parser_recovery_version','')<>'2' and (last_error like 'DLR actual register count %' or last_error='Unexpected low DLR received coverage')",
+  "update work_items set status='pending',attempts=0,last_error=null,available_at=now(),input=input||$2::jsonb,updated_at=now() where job_type=$1 and input->>'authority'='DLR' and input->>'url' like 'https://www.dlrcoco.ie/sites/dlrcoco/files/%' and status in ('pending','failed') and coalesce(input->>'parser_recovery_version','')<>'2' and (last_error like 'DLR actual register count %' or last_error='Unexpected low DLR received coverage')",
   [JOB,JSON.stringify({parser_recovery_version:2})]);
  if(parserRecovered)console.log(JSON.stringify({dlrParserV2Recovered:parserRecovered}));
  const {rows:recovered}=await db.query(
@@ -74,7 +74,7 @@ try{
    const p=await parse(job.input);
    const result={ok:true,authority:"DLR",url:job.input.url,week_ending:job.input.week_ending,
     sha256:p.sha256,applications:p.parsed.applications,headers:p.parsed.headers,
-    skipped:p.parsed.skipped,addenda_count:p.parsed.addendumCount,parser_version:2,source:"dlrcoco_official_weekly_pdf",
+    skipped:p.parsed.skipped,excluded_before_cutoff:p.parsed.beforeCutoff,addenda_count:p.parsed.addendumCount,parser_version:2,source:"dlrcoco_official_weekly_pdf",
     checked_at:new Date().toISOString()};
    await db.query("update work_items set status='completed',result=$2::jsonb,attempts=attempts+1,completed_at=now(),last_error=null,updated_at=now() where id=$1",
     [job.id,JSON.stringify(result)]);
