@@ -69,3 +69,16 @@ test("week ending at the recovery cutoff may contain only older registrations",(
  assert.equal(parsed.applications.length,0);
  assert.equal(parsed.beforeCutoff,10);
 });
+
+test("quarantine an explicitly labelled out-of-week RED III addendum only",()=>{
+ assert.equal(dlrDate("25-Aug-2026"),"2026-08-25");
+ const header="PLANNING APPLICATIONS RECEIVED FOR WEEK 34 2026\nDATED 16/08/2026 TO 22/08/2026\n- Total Application Registered = 1\n";
+ const tail="\nEND OF PLANNING APPLICATIONS RECEIVED FOR WEEK 34 2026";
+ const main=item("D26A/0621/WEB","21/08/2026");
+ const addendum=item("D26A/0632/WEB","25-Aug-2026").replace("Beacon Square","Renewable Energy Directive (RED III), Beacon Square");
+ const parsed=parseDlrReceived(header+main+"\n"+addendum+tail,url);
+ assert.equal(parsed.headers,1);
+ assert.equal(parsed.addendumCount,1);
+ assert.deepEqual(parsed.applications.map(x=>x.reference),["D26A/0621/WEB"]);
+ assert.throws(()=>parseDlrReceived(header+main+"\n"+item("D26A/0632/WEB","25-Aug-2026")+tail,url),/actual register count/);
+});

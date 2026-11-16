@@ -74,7 +74,7 @@ try{
    const p=await parse(job.input);
    const result={ok:true,authority:"DLR",url:job.input.url,week_ending:job.input.week_ending,
     sha256:p.sha256,applications:p.parsed.applications,headers:p.parsed.headers,
-    skipped:p.parsed.skipped,parser_version:2,source:"dlrcoco_official_weekly_pdf",
+    skipped:p.parsed.skipped,addenda_count:p.parsed.addendumCount,parser_version:2,source:"dlrcoco_official_weekly_pdf",
     checked_at:new Date().toISOString()};
    await db.query("update work_items set status='completed',result=$2::jsonb,attempts=attempts+1,completed_at=now(),last_error=null,updated_at=now() where id=$1",
     [job.id,JSON.stringify(result)]);
