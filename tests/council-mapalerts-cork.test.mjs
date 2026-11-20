@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {mapalertsDate,discoverCorkMapalertWeeks,parseCorkMapalertsReceived,parseCorkMapalertsDecisions} from "../src/council-mapalerts-cork.mjs";
+import {mapalertsDate,discoverCorkMapalertWeeks,parseCorkMapalertsReceived,parseCorkMapalertsDecisions,corkMapalertsReceivedFingerprint} from "../src/council-mapalerts-cork.mjs";
 const url="https://mapalerts.corkcoco.ie/en/alerts/item?view=form&ref=abcedf0123456789";
 test("find official weeks and reject off-domain alerts",()=>{
  const html='<a href="/en/alerts/item?view=form&amp;ref=abcedf0123456789">Weekly Planning Alert, 19/10/2026</a>'+
@@ -76,4 +76,18 @@ test("weekly Decision Made with explicit N/A date publishes status only",()=>{
  assert.equal(result.decisions[0].decision_text,"Decision Made");
  assert.equal(result.decisions[0].decision_date,null);
  assert.equal(result.decisions[0].observed_week,"2026-10-26");
+});
+
+test("revised Cork weekly registrations are queued once per application-content version",()=>{
+ const base=[
+  {reference:"26/2890",registration_date:"2026-11-06",application_type:"Permission",location:"Cork County",proposal:"Construction of a dwelling house"},
+  {reference:"26/2891",registration_date:"2026-11-06",application_type:"Permission",location:"Cork County",proposal:"Construction of an ancillary farm building"}
+ ];
+ const first=corkMapalertsReceivedFingerprint(base);
+ assert.equal(first,corkMapalertsReceivedFingerprint([...base].reverse()));
+ assert.equal(first,corkMapalertsReceivedFingerprint(base.map(row=>({...row,decision_text:"Decision Made"}))));
+ assert.notEqual(first,corkMapalertsReceivedFingerprint([...base,{
+  reference:"26/2892",registration_date:"2026-11-13",application_type:"Permission",location:"West Cork",proposal:"Construction of a proposed dwelling"
+ }]));
+ assert.notEqual(first,corkMapalertsReceivedFingerprint(base.map((row,i)=>i===0?{...row,registration_date:"2026-11-13"}:row)));
 });
