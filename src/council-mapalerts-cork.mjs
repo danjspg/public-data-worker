@@ -1,3 +1,4 @@
+import {createHash} from "node:crypto";
 // Cork County Council's public MapAlerts weekly lists; independent of Agile API.
 // Strict new-application parser: grant/refusal/Decision Made is never a new record.
 export const CORK_MAPALERTS_INDEX="https://mapalerts.corkcoco.ie/en/alerts?view=form";
@@ -52,6 +53,15 @@ function asLines(html){
    .replace(/<(?:h[1-6]|p|li|article|section|tr)\b[^>]*>/gi,"\n")
    .replace(/<[^>]+>/g," "))
    .replace(/\r/g,"").split("\n").map(x=>x.replace(/\s+/g," ").trim()).filter(Boolean);
+}
+// Hash only verified application facts. Council pages often change their
+// HTML or decision sections after initial publication; those changes must not
+// repeatedly enqueue identical received lists.
+export function corkMapalertsReceivedFingerprint(applications){
+ const rows=applications.map(({reference,registration_date,application_type,location,proposal})=>
+  [reference,registration_date,application_type,location,proposal])
+  .sort((x,y)=>x[0].localeCompare(y[0]));
+ return createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0,20);
 }
 export function parseCorkMapalertsReceived(html,url,cutoff=CORK_MAPALERTS_CUTOFF){
  const lines=asLines(html);
