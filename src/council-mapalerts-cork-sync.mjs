@@ -2,7 +2,7 @@
 // No Agile API usage and no production database credentials.
 import pg from "pg";
 import {createHash} from "node:crypto";
-import {CORK_MAPALERTS_INDEX,discoverCorkMapalertWeeks,parseCorkMapalertsReceived,parseCorkMapalertsDecisions} from "./council-mapalerts-cork.mjs";
+import {CORK_MAPALERTS_INDEX,discoverCorkMapalertWeeks,parseCorkMapalertsReceived,parseCorkMapalertsDecisions,corkMapalertsReceivedFingerprint} from "./council-mapalerts-cork.mjs";
 const {Client}=pg;
 const JOB="council_weekly_received",DRY=process.argv.includes("--dry-run");
 const DOC_LIMIT=Math.max(1,Math.min(8,Number(process.env.CORK_MAPALERTS_DOCUMENT_LIMIT||6)));
@@ -56,12 +56,27 @@ await db.connect();
 let seeded=0,complete=0,failed=0;
 const report=[];
 try{
- for(const d of docs){
-  const workKey="CORKCOCO:MAPALERTS:"+createHash("sha256").update(d.url).digest("hex").slice(0,24);
-  const inserted=await db.query(
-   "insert into work_items(job_type,work_key,input,status,available_at,updated_at) values($1,$2,$3::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do nothing returning id",
-   [JOB,workKey,JSON.stringify(d)]);
-  seeded+=inserted.rowCount;
+ // MapAlerts weekly pages are revised after publication. A URL-only key
+ // permanently suppresses newly added registration rows on those revisions.
+ // Inspect the latest bounded set and stage new application-content versions.
+ // Never hash the full HTML: decision/footer changes must not cause reimports.
+ for(const d of docs.slice(0,DOC_LIMIT)){
+  try{
+   const html=await official(d.url);
+   const parsed=parseCorkMapalertsReceived(html,d.url);
+   if(parsed.week!==d.week_ending)throw Error("Official alert publication week mismatch");
+   const version=corkMapalertsReceivedFingerprint(parsed.applications);
+   const workKey="CORKCOCO:MAPALERTS:"+createHash("sha256").update(d.url).digest("hex").slice(0,20)+":"+version;
+   const inserted=await db.query(
+    "insert into work_items(job_type,work_key,input,status,available_at,updated_at) values($1,$2,$3::jsonb,'pending',now(),now()) on conflict(job_type,work_key) do nothing returning id",
+    [JOB,workKey,JSON.stringify(d)]);
+   seeded+=inserted.rowCount;
+   report.push({week:d.week_ending,version,revisionStaged:Boolean(inserted.rowCount),
+    parsedApplications:parsed.applications.length,latestReceived:parsed.applications.reduce((v,a)=>a.registration_date>v?a.registration_date:v,"")});
+  }catch(e){
+   failed++;
+   report.push({week:d.week_ending,revisionError:String(e.message||e).slice(0,170)});
+  }
  }
  const {rows}=await db.query(
   "select id,input,attempts from work_items where job_type=$1 and status='pending' and applied_at is null and available_at<=now() and input->>'authority'='CORKCOCO' and input->>'week_ending'>=$2 order by input->>'week_ending' desc,id desc limit $3",
