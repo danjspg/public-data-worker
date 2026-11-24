@@ -162,11 +162,15 @@ async function stageCases(client, cases, refs) {
   return { staged, changesStaged, unchangedChecked };
 }
 
-const client = new Client({ connectionString, ssl:{rejectUnauthorized:false} });
-await client.connect();
+async function withClient(fn) {
+  const client = new Client({ connectionString, ssl:{rejectUnauthorized:false} });
+  client.on('error', error => console.warn('ACP database connection:', error.message));
+  try { await client.connect(); return await fn(client); }
+  finally { await client.end().catch(()=>{}); }
+}
 const startedAt = new Date().toISOString();
 try {
-  await upsertJob(client,{startedAt,status:'running'});
+  await withClient(client => upsertJob(client,{startedAt,status:'running'}));
   const { metadata, sourceRecordCount, cases } = await sourceSnapshot();
   const candidates = enrichmentCandidates(cases);
   const refs = new Map();
@@ -184,14 +188,12 @@ try {
     }
     if (index < candidates.length - 1 && ENRICH_DELAY_MS) await sleep(ENRICH_DELAY_MS);
   }
-  const stageReport = await stageCases(client,cases,refs);
+  const stageReport = await withClient(client => stageCases(client,cases,refs));
   const staged=stageReport.staged;
   const cursor = { source_record_count:sourceRecordCount, unique_cases:cases.length, enriched, enrichment_attempted:candidates.length, enrichment_failures:enrichmentFailures, source_last_edit_at: metadata.editingInfo?.lastEditDate ? new Date(metadata.editingInfo.lastEditDate).toISOString() : null, changes_staged:stageReport.changesStaged, unchanged_checked:stageReport.unchangedChecked };
-  await upsertJob(client,{cursor,startedAt,completedAt:new Date().toISOString(),status:'complete',error:enrichmentFailures ? `${enrichmentFailures} detail lookups failed; core source snapshot staged` : null});
+  await withClient(client => upsertJob(client,{cursor,startedAt,completedAt:new Date().toISOString(),status:'complete',error:enrichmentFailures ? `${enrichmentFailures} detail lookups failed; core source snapshot staged` : null}));
   console.log(JSON.stringify({ ...cursor, staged, changes_staged:stageReport.changesStaged, unchanged_checked:stageReport.unchangedChecked },null,2));
 } catch (error) {
-  await upsertJob(client,{startedAt,completedAt:new Date().toISOString(),status:'failed',error:error instanceof Error ? error.message : String(error)}).catch(()=>{});
+  await withClient(client => upsertJob(client,{startedAt,completedAt:new Date().toISOString(),status:'failed',error:error instanceof Error ? error.message : String(error)})).catch(e=>console.warn('ACP failure status write:',e.message));
   throw error;
-} finally {
-  await client.end().catch(()=>{});
 }
