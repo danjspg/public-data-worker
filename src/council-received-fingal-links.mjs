@@ -6,14 +6,14 @@ import {FINGAL_INDEX} from "./council-weekly-fingal.mjs";
 
 export function fingalReceivedWeeklyLinks(html, index=FINGAL_INDEX){
  const documents=[],skipped=[];
- for(const row of String(html).matchAll(/<tr\\b[^>]*>[\\s\\S]*?<\\/tr>/gi)){
-  const wk=row[0].match(/\\bweek\\s*(\\d{1,2})\\b/i);
+ for(const row of String(html).matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi)){
+  const wk=row[0].match(/\bweek\s*(\d{1,2})\b/i);
   if(!wk||Number(wk[1])<31)continue; // Week 31 ends 7 August 2026.
   const week=Number(wk[1]);
   const candidates=[];
-  for(const m of row[0].matchAll(/href\\s*=\\s*["']([^"']+\\.doc(?:\\?[^"']*)?)["']/gi)){
+  for(const m of row[0].matchAll(/href\s*=\s*["']([^"']+\.doc(?:\?[^"']*)?)["']/gi)){
    const value=m[1].replace(/&amp;/g,"&");
-   if(!/applications?\\W*received/i.test(decodeURIComponent(value)))continue;
+   if(!/applications?\W*received/i.test(decodeURIComponent(value)))continue;
    const url=new URL(value,index);
    if(url.protocol!=="https:"||url.hostname!=="www.fingal.ie")
     throw Error("Fingal source hostname mismatch");
