@@ -11,7 +11,7 @@ export function fingalReceivedWeeklyLinks(html, index=FINGAL_INDEX){
   if(!wk||Number(wk[1])<31)continue; // Week 31 ends 7 August 2026.
   // The archive contains many years with identical week numbers. Accept only
   // explicit 2026 week folders; do not relabel a 2025 Word document as 2026.
-  if(!/\/2026(?:%20|\\s)+Week(?:%20|\\s)+\\d{1,2}/i.test(row[0]))continue;
+  if(!/\/2026(?:%20|\s)+Week(?:%20|\s)+\d{1,2}/i.test(row[0]))continue;
   const week=Number(wk[1]);
   const candidates=[];
   for(const m of row[0].matchAll(/href\s*=\s*["']([^"']+\.doc(?:\?[^"']*)?)["']/gi)){
@@ -20,7 +20,7 @@ export function fingalReceivedWeeklyLinks(html, index=FINGAL_INDEX){
    const url=new URL(value,index);
    if(url.protocol!=="https:"||url.hostname!=="www.fingal.ie")
     throw Error("Fingal source hostname mismatch");
-   const documentWeek=decodeURIComponent(url.pathname).match(/\/2026\\s+Week\\s+(\\d{1,2})\//i);
+   const documentWeek=decodeURIComponent(url.pathname).match(/\/2026\s+Week\s+(\d{1,2})\//i);
    if(!documentWeek||Number(documentWeek[1])!==week){
     // Wrong-week links cannot be admitted as received records.
     candidates.push("invalid-week:"+url.href);
