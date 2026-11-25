@@ -27,13 +27,13 @@ test("two different received DOCs in one week are skipped, but other official we
 });
 
 test("missing received link logs a gap without aborting other documents",()=>{
- const result=fingalReceivedWeeklyLinks(row(42,["/sites/default/files/week-42-decisions-made.doc"])+row(43,[received(43)]));
+ const result=fingalReceivedWeeklyLinks(row(42,["/system/files/planning-weekly-lists/2026%20Week%2042/decisions-made.doc"])+row(43,[received(43)]));
  assert.equal(result.documents.length,1);
  assert.deepEqual(result.skipped,[{week:42,reason:"missing_received_document",candidate_count:0}]);
 });
 
 test("never permit a matching off-council received link",()=>{
- assert.throws(()=>fingalReceivedWeeklyLinks(row(42,["https://example.org/applications-received.doc"])),/hostname mismatch/);
+ assert.throws(()=>fingalReceivedWeeklyLinks(row(42,["https://example.org/system/files/planning-weekly-lists/2026%20Week%2042/applications-received.doc"])),/hostname mismatch/);
 });
 
 test("exclude 2025 archive documents even where their week numbers match 2026",()=>{
