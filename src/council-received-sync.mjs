@@ -11,6 +11,7 @@ import {CUTOFF,parseWexfordReceived,parseSouthDublinReceived,
  fingalReceivedCandidates,dublinCityReceivedCandidates,parseDublinCityReceived,receivedDate} from "./council-received-parser.mjs";
 import {dublinDocLinks,dublinDocxXmlText,DUBLIN_CITY_INDEX} from "./council-weekly-dublincity.mjs";
 import {FINGAL_INDEX} from "./council-weekly-fingal.mjs";
+import {fingalReceivedWeeklyLinks} from "./council-received-fingal-links.mjs";
 const exec=promisify(cb),{Client}=pg;
 const WEXFORD="https://www.wexfordcoco.ie/planning/planning-applications/planning-lists/planning-lists-for-2026";
 const SOUTH="https://planning.southdublin.ie/Home/WeeklyLists";
@@ -61,21 +62,6 @@ function southLinks(html,base){
  }
  return found;
 }
-function fingalLinks(html){
- const found=[];
- for(const m of html.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi)){
-  const wk=m[0].match(/\bweek\s*(\d{1,2})\b/i);
-  if(!wk||Number(wk[1])<31)continue; // Week 31 ends 7 August 2026.
-  const links=[...m[0].matchAll(/href\s*=\s*["']([^"']+\.doc(?:\?[^"']*)?)["']/gi)];
-  const received=links.filter(x=>/applications?\W*received/i.test(decodeURIComponent(x[1])));
-  if(received.length!==1)throw Error("Fingal applications link ambiguous, week "+wk[1]);
-  const url=new URL(received[0][1].replace(/&amp;/g,"&"),FINGAL_INDEX);
-  if(url.hostname!==HOST.FINGAL)throw Error("Fingal source hostname mismatch");
-  const week_ending=new Date(Date.UTC(2026,0,4+(Number(wk[1])-1)*7)).toISOString().slice(0,10);
-  found.push({url:url.href,week_ending,authority:"FINGAL",type:"doc"});
- }
- return found;
-}
 function dublinLinks(html){
  return dublinDocLinks(html).map(x=>({
   url:x.url,week_ending:new Date(Date.UTC(2026,0,4+(x.week-1)*7)).toISOString().slice(0,10),
@@ -90,7 +76,9 @@ async function discover(){
   docs.push(...found);
   if(!found.length)break;
  }
- docs.push(...fingalLinks(await source(FINGAL_INDEX,"FINGAL")));
+ const fingal=fingalReceivedWeeklyLinks(await source(FINGAL_INDEX,"FINGAL"));
+ docs.push(...fingal.documents);
+ if(fingal.skipped.length)console.warn("Fingal received-list coverage gaps; skipped ambiguous/missing weeks without guessing:",JSON.stringify(fingal.skipped));
  docs.push(...dublinLinks(await source(DUBLIN_CITY_INDEX,"DUBLINCITY")));
  const all=[...new Map(docs.map(x=>[x.authority+":"+x.url,x])).values()]
   .sort((a,b)=>b.week_ending.localeCompare(a.week_ending));
